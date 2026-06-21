@@ -1,0 +1,340 @@
+# This docker-compose.yml file defines a multi-container setup for our insurance data engineering project. 
+# Airflow UI:       http://localhost:8080
+# Flink UI:         http://localhost:8081
+# ClickHouse HTTP:  http://localhost:8123
+# Kafka host port:  localhost:9092
+# DataHub GMS:      http://localhost:8088
+# DataHub UI:       http://localhost:9002
+# Postgres:         localhost:5432
+
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: dockerfile.airflow
+
+  image: insurance-airflow:latest
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+    AIRFLOW__CORE__FERNET_KEY: "" # used by Airflow to encrypt sensitive values, such as connection passwords, for this project, we skip this. 
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+    AIRFLOW__WEBSERVER__SECRET_KEY: insurance_project_secret_key
+
+
+    CLICKHOUSE_HOST: ${CLICKHOUSE_HOST}
+    CLICKHOUSE_PORT: ${CLICKHOUSE_PORT}
+    CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE}
+    CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+    CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+    DATAHUB_GMS_URL: ${DATAHUB_GMS_URL}
+  # Mapping of local directories to the Airflow container.
+  volumes: &airflow-common-volumes
+    - ./dags:/opt/airflow/dags
+    - ./jobs:/opt/airflow/jobs
+    - ./sql:/opt/airflow/sql
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./generated_insurance_data:/opt/airflow/generated_insurance_data
+    - ./silver_delta:/opt/airflow/silver_delta
+    - ./silver_delta_staging:/opt/airflow/silver_delta_staging
+    - ./gold:/opt/airflow/gold
+  user: "${AIRFLOW_UID}:0"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: insurance_postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  airflow-permissions:
+    <<: *airflow-common
+    container_name: insurance_airflow_permissions
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/silver_delta /opt/airflow/silver_delta_staging /opt/airflow/gold
+        chown -R "${AIRFLOW_UID}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/silver_delta /opt/airflow/silver_delta_staging /opt/airflow/gold
+    depends_on: {}
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: insurance_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username airflow \
+          --password airflow \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com || true
+    depends_on:
+      airflow-permissions:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: insurance_airflow_webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_started
+      kafka:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: insurance_airflow_scheduler
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_started
+      kafka:
+        condition: service_started
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: insurance_clickhouse
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: insurance_kafka
+    ports:
+      - "9092:9092"
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller # Use KRaft mode, which doesn't require ZooKeeper.
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092 # Inside Docker network, listen on 29092; from host machine, listen on 9092.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092 
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  # Master node/Coordinator of the Flink cluster, responsible for managing resources and scheduling tasks.
+  flink-jobmanager: 
+    image: flink:1.18-scala_2.12
+    container_name: insurance_flink_jobmanager
+    command: jobmanager
+    ports:
+      - "8081:8081" # Flink Web UI
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: flink-jobmanager # This is how TaskManagers will find the JobManager in the Docker network.
+    volumes:
+      - ./flink:/opt/flink/usrlib
+
+  # Worker nodes of the Flink cluster, responsible for executing the tasks assigned by the JobManager.
+  flink-taskmanager: 
+    image: flink:1.18-scala_2.12
+    container_name: insurance_flink_taskmanager
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
+    volumes:
+      - ./flink:/opt/flink/usrlib
+
+  # This container is responsible for initializing the Postgres database for DataHub. It waits for the Postgres service to be healthy, then creates a new user and database for DataHub. This ensures that when we start the DataHub GMS and frontend, they can connect to the database without issues.
+
+  datahub-postgres-init:
+    image: postgres:15
+    container_name: datahub_postgres_init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+        PGPASSWORD: airflow
+    command:
+        - bash
+        - -c
+        - |
+          psql -h postgres -U airflow -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='datahub'" | grep -q 1 || \
+          psql -h postgres -U airflow -d postgres -c "CREATE DATABASE datahub"
+
+  opensearch:
+    image: opensearchproject/opensearch:2.11.1
+    container_name: insurance_opensearch
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+
+  datahub-system-update:
+    image: acryldata/datahub-upgrade:v1.5.0.6
+    container_name: insurance_datahub_system_update
+    command: ["-u", "SystemUpdate"]
+    depends_on:
+      datahub-postgres-init:
+        condition: service_completed_successfully
+      opensearch:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      EBEAN_DATASOURCE_URL: jdbc:postgresql://postgres:5432/datahub
+      EBEAN_DATASOURCE_DRIVER: org.postgresql.Driver
+      EBEAN_DATASOURCE_USERNAME: airflow
+      EBEAN_DATASOURCE_PASSWORD: airflow
+      EBEAN_DATASOURCE_HOST: postgres:5432
+
+      ELASTICSEARCH_HOST: opensearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_PROTOCOL: http
+      ELASTICSEARCH_USE_SSL: "false"
+      ELASTICSEARCH_IMPLEMENTATION: opensearch
+      GRAPH_SERVICE_IMPL: elasticsearch
+
+      KAFKA_BOOTSTRAP_SERVER: ${KAFKA_BOOTSTRAP_SERVERS}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+
+      SCHEMA_REGISTRY_TYPE: INTERNAL
+      KAFKA_SCHEMAREGISTRY_URL: http://datahub-gms:8080/schema-registry/api/
+      USE_CONFLUENT_SCHEMA_REGISTRY: "false"
+
+      DATAHUB_SECRET: ${DATAHUB_SECRET}
+      METADATA_SERVICE_AUTH_ENABLED: "false"
+      DATAHUB_SQL_SETUP_ENABLED: "true"
+      DATAHUB_PRECREATE_TOPICS: "true"
+      ENTITY_REGISTRY_CONFIG_PATH: /datahub/datahub-gms/resources/entity-registry.yml
+
+  datahub-gms:
+    image: acryldata/datahub-gms:v1.5.0.6
+    container_name: insurance_datahub_gms
+    depends_on:
+      datahub-system-update:
+        condition: service_completed_successfully
+    ports:
+      - "8088:8080"
+    environment:
+      EBEAN_DATASOURCE_URL: jdbc:postgresql://postgres:5432/datahub
+      EBEAN_DATASOURCE_DRIVER: org.postgresql.Driver
+      EBEAN_DATASOURCE_USERNAME: airflow
+      EBEAN_DATASOURCE_PASSWORD: airflow
+      EBEAN_DATASOURCE_HOST: postgres:5432
+
+      ELASTICSEARCH_HOST: opensearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_PROTOCOL: http
+      ELASTICSEARCH_USE_SSL: "false"
+      ELASTICSEARCH_IMPLEMENTATION: opensearch
+      GRAPH_SERVICE_IMPL: elasticsearch
+
+      KAFKA_BOOTSTRAP_SERVER: ${KAFKA_BOOTSTRAP_SERVERS}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+
+      SCHEMA_REGISTRY_TYPE: INTERNAL
+      KAFKA_SCHEMAREGISTRY_URL: http://datahub-gms:8080/schema-registry/api/
+      USE_CONFLUENT_SCHEMA_REGISTRY: "false"
+
+      DATAHUB_SECRET: ${DATAHUB_SECRET}
+      DATAHUB_TOKEN_SERVICE_SIGNING_KEY: ${DATAHUB_SECRET}
+      METADATA_SERVICE_AUTH_ENABLED: "false"
+      DATAHUB_SERVER_TYPE: quickstart
+      ENTITY_REGISTRY_CONFIG_PATH: /datahub/datahub-gms/resources/entity-registry.yml
+
+      MAE_CONSUMER_ENABLED: "true"
+      MCE_CONSUMER_ENABLED: "true"
+      PE_CONSUMER_ENABLED: "true"
+      DATAHUB_TELEMETRY_ENABLED: "false"
+      
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:8080/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  datahub-frontend:
+    image: acryldata/datahub-frontend-react:v1.5.0.6
+    container_name: insurance_datahub_frontend
+    depends_on:
+      datahub-gms:
+        condition: service_healthy
+    ports:
+      - "9002:9002"
+    environment:
+      DATAHUB_GMS_HOST: datahub-gms
+      DATAHUB_GMS_PORT: "8080"
+      environment:
+      DATAHUB_SECRET: ${DATAHUB_SECRET}
+      DATAHUB_APP_VERSION: "v1.5.0.6"
+      DATAHUB_PLAY_MEM_BUFFER_SIZE: "10MB"
+      DATAHUB_TRACKING_TOPIC: DataHubUsageEvent_v1
+      KAFKA_BOOTSTRAP_SERVER: ${KAFKA_BOOTSTRAP_SERVERS}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      ELASTIC_CLIENT_HOST: opensearch
+      ELASTIC_CLIENT_PORT: "9200"
+      DATAHUB_BASE_PATH: /
+      DATAHUB_GMS_BASE_PATH: /
+      THEME_V2_DEFAULT: "true"
+      AUTH_JAAS_ENABLED: "true"
+      AUTH_NATIVE_ENABLED: "true"
+      AUTH_OIDC_ENABLED: "false"
+volumes:
+  postgres_data:
+  clickhouse_data:
+  kafka_data:
+  opensearch_data:

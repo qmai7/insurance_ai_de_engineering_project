@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Generated data and local lakehouse outputs (regenerable from the generator)
+generated_insurance_data/
+silver_delta/
+silver_delta_staging/
+silver/
+gold/
+quality/
+*.duckdb
+*.db
+
+# Docker / local runtime state (bind mounts & named-volume dirs)
+postgres_data/
+kafka_data/
+clickhouse_data/
+opensearch_data/
+config/
+plugins/
+logs/
+
+# Secrets and environment files (commit .env.example instead)
+.env
+*.env
+!.env.example
+
+# OS / editor junk
+.DS_Store
+.idea/
+.vscode/
+
+# Note: flink/flink-sql-connector-kafka-*.jar IS committed on purpose so the
+# streaming path works out of the box. Remove the next line's comment to ignore
+# it instead and rely on a download step.
+# flink/*.jar

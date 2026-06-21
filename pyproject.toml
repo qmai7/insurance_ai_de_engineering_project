@@ -1,0 +1,20 @@
+[project]
+name = "insurance-aide-engineering-project"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+dependencies = [
+    "pandas",
+    "numpy",
+    "pyarrow",
+    "pyspark",
+    "delta-spark",
+    "clickhouse-connect",
+    "confluent-kafka",
+    "great-expectations",
+    "acryl-datahub",
+    "python-dotenv",
+    "pydantic",
+    "pyyaml",
+    "sqlalchemy"
+]
