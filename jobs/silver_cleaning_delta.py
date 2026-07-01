@@ -51,7 +51,21 @@ def create_spark_session() -> SparkSession:
 
 
 def read_bronze_table(spark: SparkSession, table_name: str):
-    """Read one generated Bronze Parquet file."""
+    """Read one generated Bronze Parquet file.
+
+    policyholders is written as a folder with old/new schemas,
+    so Silver uses mergeSchema to handle schema evolution.
+    Other tables remain single Parquet files.
+    """
+
+    if table_name == "policyholders":
+        return (
+            spark.read
+            # We use "mergeSchema" to reconcile the old which doesn't have "risk_segment" column with the new which does. This fills risk_segment with nulls for legacy records
+            .option("mergeSchema", "true")
+            .parquet(str(BRONZE_DIR / "policyholders"))
+        )
+
     return spark.read.parquet(str(BRONZE_DIR / f"{table_name}.parquet"))
 
 

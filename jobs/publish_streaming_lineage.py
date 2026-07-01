@@ -87,7 +87,7 @@ def main() -> None:
         src_jsonl: ("Streaming source events", "Generated JSONL insurance events used as the streaming source."),
         raw_topic: ("Kafka insurance_events_raw", "Raw insurance events replayed into Kafka."),
         features_topic: ("Kafka insurance_events_features", "30-min HOP-window streaming features emitted by Flink."),
-        ch_features: ("Gold feat_stream_30m", "ClickHouse table of sliding 30-min streaming features per customer."),
+        ch_features: ("Gold feat_stream_30m", "ClickHouse table of sliding 30-min streaming features per province."),
     }
     for urn, (name, description) in datasets.items():
         emit_dataset_properties(emitter, urn, name, description)

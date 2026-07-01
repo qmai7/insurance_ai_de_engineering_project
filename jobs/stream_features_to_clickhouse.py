@@ -36,7 +36,9 @@ CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "gold_insurance")
 
 TARGET_TABLE = f"{CLICKHOUSE_DATABASE}.feat_stream_30m"
 COLUMNS = [
-    "customer_id",
+    # DEMO: features are keyed by province (see flink/insurance_stream_features.sql)
+    # so local-global aggregation has enough records per key to collapse.
+    "province",
     "window_start",
     "window_end",
     "f_stream_quote_views_30m",
@@ -65,7 +67,7 @@ def create_target_table(client) -> None:
         f"""
         CREATE TABLE {TARGET_TABLE}
         (
-            customer_id String,
+            province String,
             window_start DateTime,
             window_end DateTime,
             f_stream_quote_views_30m UInt64,
@@ -74,7 +76,7 @@ def create_target_table(client) -> None:
             f_stream_burst_activity_flag Bool,
             ingested_at DateTime DEFAULT now()
         ) ENGINE = MergeTree -- MergeTree is the most common ClickHouse engine for analytical queries over large datasets.
-        ORDER BY (window_start, customer_id)
+        ORDER BY (window_start, province)
         """
     )
 
@@ -86,7 +88,7 @@ def parse_ts(value: str) -> datetime:
 # Convert the incoming Kafka message (a dict) into a list of values in the same order as the COLUMNS list, so we can insert into ClickHouse.
 def to_row(event: dict) -> list:
     return [
-        str(event["customer_id"]),
+        str(event["province"]),
         parse_ts(event["window_start"]),
         parse_ts(event["window_end"]),
         int(event["f_stream_quote_views_30m"]),
@@ -111,6 +113,7 @@ def main() -> None:
 
     batch: list[list] = []
     total = 0
+    skipped = 0
 
     def flush() -> None:
         nonlocal batch, total
@@ -121,12 +124,20 @@ def main() -> None:
             batch = []
     '''For every Kafka message: read message -> deserialize JSON -> convert to row format -> add to batch -> if batch size >= 20k, write batch to ClickHouse and flush batch'''
     for message in consumer:
-        batch.append(to_row(message.value))
+        event = message.value
+        # Skip stale/mismatched messages (e.g. old customer-keyed features left
+        # on the topic from a previous run) instead of crashing on KeyError.
+        if not isinstance(event, dict) or "province" not in event:
+            skipped += 1
+            continue
+        batch.append(to_row(event))
         if len(batch) >= BATCH_SIZE: # flush if batch reaches 20k rows
             flush()
     flush() # flush any remaining rows after exiting the loop (e.g. if we had 5k rows left after the last batch of 20k)
     consumer.close() # Close the Kafka consumer connection.
 
+    if skipped:
+        print(f"skipped {skipped} messages missing 'province' (likely old-schema backlog)")
     table_count = client.query(f"SELECT count() FROM {TARGET_TABLE}").result_rows[0][0]
     print(f"done. consumed {total} feature messages; {TARGET_TABLE} now has {table_count} rows")
 

@@ -42,7 +42,8 @@ with DAG(
         task_id="validate_bronze_inputs_exist",
         bash_command="""
         set -e
-        test -f /opt/airflow/generated_insurance_data/offline/policyholders.parquet
+        test -f /opt/airflow/generated_insurance_data/offline/policyholders/part_old.parquet
+        test -f /opt/airflow/generated_insurance_data/offline/policyholders/part_new.parquet
         test -f /opt/airflow/generated_insurance_data/offline/policies.parquet
         test -f /opt/airflow/generated_insurance_data/offline/claims.parquet
         test -f /opt/airflow/generated_insurance_data/offline/payments.parquet

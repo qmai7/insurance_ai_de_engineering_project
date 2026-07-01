@@ -46,29 +46,29 @@ offline/streaming feature tables.
 | payments | 30,000 attempts | payment_id, policy_id, payment_date, amount, payment_method, payment_status |
 | streaming events | 35,926 events (1 day) | event_id, event_type, event_timestamp, created_ts, customer_id, policy_id, geo, channel, device |
 
-**Known, intentional data issues (velocity/quality) the pipeline must handle:**
+**Known, intentional data issues the pipeline must handle: (details found in `generated_insurance_data/quality_report.json`)**
+For offline data(stored in .parquet format):
 - **Geography skew** — ~70% of customers in Quebec (drives Spark skew-join tuning).
+- **High Cardinality** —  `"customer_id_distinct_count": 10000`,`"policy_id_distinct_count": 15000`,`"claim_id_distinct_count": 2700`
 - **Duplicates** — ~2% duplicate claim rows; ~1.5% duplicate streaming event_ids.
 - **Schema evolution** — `risk_segment` and `payment_method` are null for records
-  before `2025-10-01`. (SCD  )
+  before `2025-10-01`. (SCD)
+
+For streaming data(stored in .jsonl format): 
+- **Duplicates** — ~3% duplicate event_id; Specifically, `"stream_duplicate_event_id_rate_pct": 2.95` & `"stream_event_count_including_duplicates": 35926`
 - **Streaming bursts** — 10× traffic in 08:00–08:20 and 20:00–20:20 windows.
-- **Late arrivals** — ~12% of events arrive 5–45 minutes after the event time.
+- **Late arrivals** — ~12% of events arrive 5–45 minutes after the event time. Specifically `"stream_late_arrival_rate_pct": 11.91`
 
-**Assumptions / coursework simplifications (stated up front):**
+**coursework simplifications (stated up front):**
 - The generator is the source system and is run **manually once** before the
-  pipeline; it is intentionally **not** part of the DAG.
-- Single-node Kafka (KRaft), single Flink TaskManager, `local[*]` Spark.
+  pipeline; it is intentionally **not** part of the Airflow DAG.
 - Silver/Gold use **full overwrite** rebuilds (idempotent) rather than incremental
-  merge/upsert — justified by the small, deterministic dataset (see §7.2).
+  merge/upsert — justified by the small, deterministic dataset.
 - Dimensions are **Type-1 (overwrite)**; SCD2 is designed-for but not implemented.
-
-**SLA targets (simulated).** Bronze ≤ 10 min, Silver ≤ 30 min,
-Gold fact/OBT ≤ 30 min, `feat_customer_90d` ≤ 60 min, `feat_stream_30m` ≤ 5 min,
-availability ≥ 99% of (simulated) scheduled runs/week.
 
 ---
 
-## 2. Dimension design
+## 2. Data modeling design
 
 ![Data modeling](assets/Data_Modeling.png)
 

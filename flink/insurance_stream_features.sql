@@ -1,5 +1,4 @@
 -- Flink SQL streaming feature engineering job.
--- This helps answer a moving business question: "What happened with each customer in the last 30 minutes?"
 --
 -- Flow:
 --   Kafka topic insurance_events_raw
@@ -10,11 +9,36 @@
 -- Run with flink/run_flink_stream_job.sh, which submits this file through the
 -- Flink SQL client with the Kafka connector JAR attached.
 
--- Streaming job settings. parallelism.default=1 keeps the single-partition
--- coursework topic simple; the job runs detached on the cluster.
+-- Streaming job settings. The job runs detached on the cluster.
 SET 'execution.runtime-mode' = 'streaming';
-SET 'pipeline.name' = 'insurance_stream_features';
-SET 'parallelism.default' = '1';
+SET 'parallelism.default' = '2';
+
+-- ---------------------------------------------------------------------------
+-- BASELINE vs OPTIMIZED demonstration (change ONE variable: agg-phase-strategy)
+--
+-- This is a Window TVF aggregation (GROUP BY over TABLE(HOP(...))). For that
+-- operator, local-global (two-phase) aggregation is the real lever:
+--   ONE_PHASE -> a single WindowAggregate; every raw record is shuffled by
+--                customer_id to one operator -> more records across the shuffle,
+--                more state access, higher busy time.
+--   TWO_PHASE -> LocalWindowAggregate -> (keyBy shuffle) -> GlobalWindowAggregate;
+--                the local operator pre-aggregates before the shuffle, so far
+--                fewer records reach the global operator and busy time drops.
+--
+--
+-- To demo: run the BASELINE block, observe the plan / metrics in the Flink UI
+-- (http://localhost:8081), then comment it out, enable the OPTIMIZED block, and
+-- resubmit. Distinct pipeline.name values keep both runs easy to tell apart.
+-- ---------------------------------------------------------------------------
+
+-- BASELINE (single-phase aggregation)
+-- SET 'pipeline.name' = 'insurance_stream_features_baseline';
+-- SET 'table.optimizer.agg-phase-strategy' = 'ONE_PHASE';
+
+-- OPTIMIZED (two-phase / local-global aggregation) -- uncomment to run, and
+-- comment out the two BASELINE lines above.
+SET 'pipeline.name' = 'insurance_stream_features_twophase';
+SET 'table.optimizer.agg-phase-strategy' = 'TWO_PHASE';
 
 -- This does not create a table in database; it just tells Flink how to connect to the Kafka topic and interpret the data.
 CREATE TABLE insurance_events_raw (
@@ -54,7 +78,10 @@ CREATE TABLE insurance_events_raw (
 -- f_stream_payment_failed_30m: 0
 -- f_stream_burst_activity_flag: true (if total events in window >= 10)
 CREATE TABLE insurance_stream_features (
-  customer_id STRING,
+  -- DEMO: keyed by province (2 distinct values, ~62 records per 5-min slice) so
+  -- local-global (TWO_PHASE) can actually collapse records before the shuffle.
+  -- The real feature job keys by customer_id (~1 record per slice, no benefit).
+  province STRING,
   window_start TIMESTAMP(3),
   window_end TIMESTAMP(3),
   f_stream_quote_views_30m BIGINT,
@@ -75,17 +102,17 @@ CREATE TABLE insurance_stream_features (
 -- - each result looks back over the last 30 minutes
 INSERT INTO insurance_stream_features
 SELECT
-  customer_id,
+  province,
   window_start,
   window_end,
   SUM(CASE WHEN event_type = 'quote_view' THEN 1 ELSE 0 END),
   SUM(CASE WHEN event_type = 'claim_submitted' THEN 1 ELSE 0 END),
   SUM(CASE WHEN event_type = 'payment_failed' THEN 1 ELSE 0 END),
-  COUNT(*) >= 10
+  COUNT(*) >= 10 AS f_stream_burst_activity_flag
 FROM TABLE(
   -- HOP creates rolling/sliding windows of 30 minutes that hop every 5 minutes, based on the event_timestamp field of the input data.
   -- So, Flink will create windows like:
   -- [12:00 - 12:30), [12:05 - 12:35), [12:10 - 12:40), etc.
   HOP(TABLE insurance_events_raw, DESCRIPTOR(event_timestamp), INTERVAL '5' MINUTE, INTERVAL '30' MINUTE)
 )
-GROUP BY customer_id, window_start, window_end;
+GROUP BY province, window_start, window_end;

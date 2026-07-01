@@ -16,5 +16,6 @@ dependencies = [
     "python-dotenv",
     "pydantic",
     "pyyaml",
-    "sqlalchemy"
+    "sqlalchemy",
+    "kafka-python>=3.0.7",
 ]

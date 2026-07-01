@@ -365,7 +365,23 @@ def main(config: GeneratorConfig = CONFIG) -> None:
     events = generate_streaming_events(policyholders, policies, config, stream_days=1)
 
     print("Writing strict Parquet offline datasets...")
-    write_dataframe(policyholders, offline_dir / "policyholders")
+    
+    # Create two physical Parquet files with different schemas for policyholders to simulate schema evolution. The old file has no risk_segment column.
+    policyholders_dir = offline_dir / "policyholders"
+    policyholders_dir.mkdir(parents=True, exist_ok=True)
+
+    old_ph = policyholders[
+        policyholders["signup_ts"] < pd.Timestamp(config.schema_change_date)
+    ].drop(columns=["risk_segment"])
+
+    new_ph = policyholders[
+        policyholders["signup_ts"] >= pd.Timestamp(config.schema_change_date)
+    ]
+
+    old_ph.to_parquet(policyholders_dir / "part_old.parquet", index=False)
+    new_ph.to_parquet(policyholders_dir / "part_new.parquet", index=False)
+
+    # Write the other tables as single Parquet files.
     write_dataframe(policies, offline_dir / "policies")
     write_dataframe(claims, offline_dir / "claims")
     write_dataframe(payments, offline_dir / "payments")

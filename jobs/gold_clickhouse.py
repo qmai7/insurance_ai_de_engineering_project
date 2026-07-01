@@ -250,27 +250,59 @@ def main() -> None:
 
     # Offline feature table. Later, this can become a Feast offline store source.
     as_of = F.to_date(F.lit("2025-11-01"))
+
+    # High-cardinality optimization:
+    # Bucket fact tables by customer_key before customer-level feature aggregation.
+    # This pre-organizes rows with the same customer_key into the same bucket hash partition, 
+    # which allows Spark to skip the shuffle stage when grouping by customer_key.
+
+    BUCKETS = 8
+
+    fact_claims.write \
+        .mode("overwrite") \
+        .bucketBy(BUCKETS, "customer_key") \
+        .sortBy("customer_key") \
+        .saveAsTable("fact_claims_bucketed")
+
+    fact_payment_attempts.write \
+        .mode("overwrite") \
+        .bucketBy(BUCKETS, "customer_key") \
+        .sortBy("customer_key") \
+        .saveAsTable("fact_payment_attempts_bucketed")
+
+    fact_claims_bucketed = spark.table("fact_claims_bucketed")
+    fact_payment_attempts_bucketed = spark.table("fact_payment_attempts_bucketed")
+
     claims_90 = (
-        fact_claims.join(dim_policy.select("policy_key", "policy_type"), "policy_key")
+        fact_claims_bucketed
+        .join(dim_policy.select("policy_key", "policy_type"), "policy_key")
         .join(dim_date.select(F.col("date_key").alias("claim_date_key"), "calendar_date"), "claim_date_key")
         .where((F.col("calendar_date") >= F.date_sub(as_of, 90)) & (F.col("calendar_date") < as_of))
     )
+    
     payments_90 = (
-        fact_payment_attempts.join(dim_date.select(F.col("date_key").alias("payment_date_key"), "calendar_date"), "payment_date_key")
+        fact_payment_attempts_bucketed
+        .join(dim_date.select(F.col("date_key").alias("payment_date_key"), "calendar_date"), "payment_date_key")
         .where((F.col("calendar_date") >= F.date_sub(as_of, 90)) & (F.col("calendar_date") < as_of))
     )
 
+    # Aggregate claim features by customer_key for the last 90 days. 
     claim_features = claims_90.groupBy("customer_key").agg(
+        #Use coalesce to fill nulls with 0
         F.coalesce(F.avg("claim_amount"), F.lit(0.0)).alias("f_customer_avg_claim_amount_90d"),
         F.count("claim_id").cast("int").alias("f_customer_total_claims_90d"),
         F.coalesce(F.sum("claim_amount"), F.lit(0.0)).alias("f_customer_total_claim_amount_90d"),
     )
+
+    # Aggregate payment features by customer_key for the last 90 days.
     payment_features = payments_90.groupBy("customer_key").agg(
         F.coalesce(F.sum("amount"), F.lit(0.0)).alias("f_customer_total_payments_90d"),
-        F.coalesce(F.avg(F.when(F.col("payment_status") == "failed", 1.0).otherwise(0.0)), F.lit(0.0)).alias(
-            "f_customer_payment_failure_rate_90d"
-        ),
+        F.coalesce(
+            F.avg(F.when(F.col("payment_status") == "failed", 1.0).otherwise(0.0)),
+            F.lit(0.0)
+        ).alias("f_customer_payment_failure_rate_90d"),
     )
+
     feat_customer_90d = (
         dim_customer.select("customer_key", "customer_id")
         .join(claim_features, "customer_key", "left")
