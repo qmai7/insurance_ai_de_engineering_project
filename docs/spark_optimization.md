@@ -1,6 +1,6 @@
 # Spark job to handle offline data problems
 
-## 1. Duplication,
+## 1. Duplication:
 The claim data contained 54 duplicate claim IDs (3.92% duplicate rate). We use the `deduplicate_by_key` function below, which uses the window function "partitionBy" to group rows with the same "claim_id," then "orderBy" "claim_date" (sorting by newest date first). We then assign sequential numbers after sorting (using the _rn column), keep only the row where "_rn" = 1, and drop "rn". 
 
 ```python

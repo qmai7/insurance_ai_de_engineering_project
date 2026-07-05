@@ -19,7 +19,7 @@ SET 'parallelism.default' = '2';
 -- This is a Window TVF aggregation (GROUP BY over TABLE(HOP(...))). For that
 -- operator, local-global (two-phase) aggregation is the real lever:
 --   ONE_PHASE -> a single WindowAggregate; every raw record is shuffled by
---                customer_id to one operator -> more records across the shuffle,
+--                province to one operator -> more records across the shuffle,
 --                more state access, higher busy time.
 --   TWO_PHASE -> LocalWindowAggregate -> (keyBy shuffle) -> GlobalWindowAggregate;
 --                the local operator pre-aggregates before the shuffle, so far
