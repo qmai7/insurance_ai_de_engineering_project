@@ -107,6 +107,7 @@ def main() -> None:
         bootstrap_servers=BOOTSTRAP, 
         group_id="clickhouse_stream_sink", # Kafka consumer group name. Kafka uses consumer groups to track which consumer is reading what. 
         auto_offset_reset="earliest", # If there's no committed offset for this consumer group (e.g. on the first run), start reading from the earliest messages in the topic.
+        enable_auto_commit=False, 
         consumer_timeout_ms=IDLE_TIMEOUT_MS,
         value_deserializer=lambda v: json.loads(v.decode("utf-8")), # Kafka message value is JSON bytes, so we decode it to a dict.
     )

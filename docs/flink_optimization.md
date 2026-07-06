@@ -65,7 +65,20 @@ The pipeline handles late-arriving events using Flink's watermark-based mechanis
 WATERMARK FOR event_timestamp AS event_timestamp - INTERVAL '5' MINUTE
 ```
 
-*Limitation* Once the watermark has advanced more than 5 minutes past an event's timestamp, that event is silently dropped by the windowed aggregation. Flink's Table API does not currently expose a "late data" side-output like **DataStream API's** ``allowedLateness`` + ``sideOutputLateData`` (write a second sink like another Kafka topic so late events can be consumed in a seperate stream). This could be an improvement point in the future. 
+### Limitation 
+Once the watermark has advanced more than 5 minutes past an event's timestamp, that event is silently dropped by the windowed aggregation. Flink's Table API does not currently expose a "late data" side-output like **DataStream API's** ``allowedLateness`` + ``sideOutputLateData`` (write a second sink like another Kafka topic so late events can be consumed in a seperate stream). This could be an improvement point in the future. 
+
+### Bug and fix 
+When putting in place the optimization, I also have to set `parallelism.default = '2'` meaning that Flink has 2 subtasks which help demonstrate the two-phase local & global aggregation benefit. 
+ - For the **aggregator operator**, parallelism 2 is useful - it's what lets me demonstrate the shuffle/local-global story above. 
+ - However for the **source operator**, since `insurance_events_raw` topic only has *1 partition* - Kafka can only hand that partition to *one* consumer(Flink's subtask) at a time. Thus, one of 2 subtasks gets real work and the other one sits idle forever.  
+
+### Why that's fatal for watermarks specifically
+a watermark isn't a per-subtask concept once you cross an operator boundary — the downstream operator (your WindowAggregate) needs one single combined notion of "how far in event-time have we progressed," and it computes that by taking the minimum watermark across every upstream subtask feeding it. This is intentional and necessary: it's how Flink guarantees correctness even when parallel subtasks process events at different real-world speeds — the window operator can't assume a window is "done" until every upstream source confirms it won't send anything earlier.
+
+Here's the mechanism visually — one subtask actively advances its watermark while the other, having received nothing, is stuck at negative infinity. The downstream operator has to take the minimum of both:
+
+![watermark_minimum_stall_bug](../assets/watermark_minimum_stall_bug.png)
 
 ## 4. Burst handling — already implemented, as a feature
 

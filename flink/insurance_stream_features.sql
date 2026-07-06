@@ -12,6 +12,16 @@
 -- Streaming job settings. The job runs detached on the cluster.
 SET 'execution.runtime-mode' = 'streaming';
 SET 'parallelism.default' = '2';
+SET 'execution.checkpointing.interval' = '30 s';
+
+-- The raw topic has a SINGLE partition but parallelism is 2, so one of the two
+-- Kafka source subtasks never reads any data. On an event-time job the window
+-- operator's watermark is the MINIMUM across all its inputs, so that permanently
+-- idle subtask (watermark = -infinity) pins the combined watermark and NO HOP
+-- window ever fires -> empty features topic -> 0 rows in ClickHouse.
+-- Marking a subtask idle after 15s of no records excludes it from the watermark
+-- calculation, so the active subtask's watermark can advance and windows fire.
+SET 'table.exec.source.idle-timeout' = '15 s';
 
 -- ---------------------------------------------------------------------------
 -- BASELINE vs OPTIMIZED demonstration (change ONE variable: agg-phase-strategy)
