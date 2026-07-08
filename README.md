@@ -77,10 +77,35 @@ Detail doc: [Flink job to handle streaming data problems ](docs/flink_optimizati
 ## 3. Data Storage 
 ClickHouse - detail doc: [ClickHouse storage-layer optimization ](docs/clickhouse_optimization.md)
 
-## 4. Data Pipeline Orchestration (Airflow):
+## 4. Data Pipeline Orchestration - Batch pipeline (Airflow):
 
+The DAG pipeline is orchestrated by `dags/insurance_batch_pipeline.py`
+
+![Airflow Pipeline](assets/Airflow_DAG.png)
+
+For the sake of simplicity, data in this project at all layers is stored locally. 
+
+
+- **Bronze:** raw source files preserved as Parquet; `validate_bronze_inputs_exist`
+  confirms all files exist before processing.
+- **Silver (lakehouse, Delta):** type cast/standardize, filter null keys, drop invalid
+  (negative) measures, dedup by business key, and add ingest metadata
+  (`ingest_ts`, `source_system`, `batch_id`, `ingest_year/month/day`). Written to
+  `silver_delta_staging`, validated by the Silver gate, then **published**
+  (overwrite) to trusted `silver_delta` partitioned by ingest date.
+- **Gold (ClickHouse):** dims, facts, OBT, and `feat_customer_90d`.
 
 ## 5. Data Governance (DataHub): 
+
+Data Governance is also implemented using DataHub. 
+
+It helps 
+  - track the lineage of our data assets, and answers some questions such as: what are the steps taken to have a given data asset(.parquet file, a table in ClickHouse), or at a given step, what are the resulting data asset?
+  - for a given data asset, it also ensures data quality by displaying the expectations about data reliability. 
+
+Detail doc: [Data Governance with DataHub ](docs/datahub.md)
+
+- View in the DataHub UI (`http://localhost:9002`)
 
 ## 6. Data modeling design
 
@@ -132,31 +157,6 @@ date; `risk_segment` stays `Nullable` (schema evolution). Partitioned by
 
 ---
 
-## 5. Refresh & data quality plan
-
-**Freshness SLAs (simulated).**. Targets are demonstrated through DAG
-schedule/retry/timeout configuration rather than measured against a live feed,
-because the source is synthetic and the DAG is currently **manual-trigger**.
-
-**Two quality gates (fail-fast).**
-
-1. **Silver gate** — `jobs/silver_quality_checks.py`, runs *after* cleaning and
-   *before* Gold. Per table: row count > 0, business key not-null, business key
-   unique; plus `claim_amount >= 0` and `payment amount >= 0`. Non-zero exit stops
-   the DAG before any Gold table is built.
-2. **Gold gate** — `jobs/quality_checks_clickhouse.py`, runs after Gold modeling.
-   Checks: dimension/fact business-key uniqueness, fact→dimension FK not-null,
-   non-negative measures, and feature range validity
-   (`0 <= payment_failure_rate <= 1`). Results are persisted to
-   `gold_insurance.quality_check_results` (check_name, status, failure_count,
-   checked_at) as durable evidence, not just logs.
-
-Utilizing readable Python/Spark/ClickHouse checks instead of Great
-Expectations/Deequ to stay simple and fully runnable in Docker; the gate concept
-is identical.
-
----
-
 ## 6. Feature store design
 
 Two feature tables are implemented in `gold_insurance` (a future `feat_customer_unified`
@@ -190,23 +190,7 @@ a window.
 
 ## 7. Data pipeline plan & implementation
 
-### 7.1 Batch pipeline (Bronze → Silver → Gold)
 
-Orchestrated by `dags/insurance_batch_pipeline.py`
-(DAG `insurance_batch_bronze_silver_gold`):
-
-![Airflow Pipeline](assets/Airflow_DAG.png)
-
-
-- **Bronze:** raw source files preserved as Parquet; `validate_bronze_inputs_exist`
-  confirms all files exist before processing. (Ingest metadata is added at Silver,
-  see below.)
-- **Silver (lakehouse, Delta):** type cast/standardize, filter null keys, drop invalid
-  (negative) measures, dedup by business key, and add ingest metadata
-  (`ingest_ts`, `source_system`, `batch_id`, `ingest_year/month/day`). Written to
-  `silver_delta_staging`, validated by the Silver gate, then **published**
-  (overwrite) to trusted `silver_delta` partitioned by ingest date.
-- **Gold (ClickHouse):** dims, facts, OBT, and `feat_customer_90d`.
 
 ### 7.2 Update strategy
 
@@ -253,18 +237,8 @@ run via the documented scripts (a DAG/host-script wrapper is optional future wor
 - **Schedule** — currently `schedule_interval=None` (manual trigger only),
   `catchup=False`. Was `*/30 * * * *` for the SLA simulation.
 
-### 7.5 Lineage tracking (DataHub) — evidence
 
-![Data modeling](assets/Datahub_datalineage.png)
 
-- **Batch** (`jobs/publish_datahub_lineage.py`): Bronze→Silver→Gold dataset lineage,
-  **plus** the Airflow DAG as a `DataFlow` (orchestrator `airflow` → platform
-  `urn:li:dataPlatform:airflow`).
-- **Streaming** (`jobs/publish_streaming_lineage.py`): JSONL → Kafka raw → **Flink**
-  (orchestrator `flink` → platform `urn:li:dataPlatform:flink`) → Kafka features →
-  ClickHouse `feat_stream_30m`.
-- View in the DataHub UI (`http://localhost:9002`): open a dataset → **Lineage**
-  tab, or browse the **Airflow** / **Flink** platforms.
 
 ---
 

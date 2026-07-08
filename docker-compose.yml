@@ -42,6 +42,7 @@ x-airflow-common: &airflow-common
     - ./silver_delta:/opt/airflow/silver_delta
     - ./silver_delta_staging:/opt/airflow/silver_delta_staging
     - ./gold:/opt/airflow/gold
+    - ./reports:/opt/airflow/reports
   user: "${AIRFLOW_UID}:0"
 
 services:
@@ -70,8 +71,8 @@ services:
     command:
       - -c
       - |
-        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/silver_delta /opt/airflow/silver_delta_staging /opt/airflow/gold
-        chown -R "${AIRFLOW_UID}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/silver_delta /opt/airflow/silver_delta_staging /opt/airflow/gold
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/silver_delta /opt/airflow/silver_delta_staging /opt/airflow/gold /opt/airflow/reports
+        chown -R "${AIRFLOW_UID}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/silver_delta /opt/airflow/silver_delta_staging /opt/airflow/gold /opt/airflow/reports
     depends_on: {}
 
   airflow-init:

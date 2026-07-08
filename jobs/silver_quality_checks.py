@@ -10,6 +10,7 @@ production project, the same checks could be implemented with Great Expectations
 or Deequ, and results could be published to a data quality dashboard.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -58,11 +59,14 @@ def main() -> None:
     }
 
     checks = []
+    row_counts = {}
 
     for table_name, (df, key_col) in tables.items():
         # Every Silver table must have rows, a non-null primary/business key,
         # and no duplicate business keys after deduplication.
-        checks.append((f"{table_name}_row_count_positive", df.count() > 0))
+        row_count = df.count()
+        row_counts[table_name] = row_count
+        checks.append((f"{table_name}_row_count_positive", row_count > 0))
         checks.append((f"{table_name}_{key_col}_not_null", df.where(F.col(key_col).isNull()).count() == 0))
         checks.append((f"{table_name}_{key_col}_unique", duplicate_count(df, key_col) == 0))
 
@@ -73,6 +77,16 @@ def main() -> None:
     failed = [name for name, passed in checks if not passed]
     for name, passed in checks:
         print(f"{name}: {'PASS' if passed else 'FAIL'}")
+
+    # Persist real results so DataHub can publish the actual outcome of this
+    # gate instead of a placeholder (read by publish_datahub_lineage.py).
+    report_path = BASE_DIR / "reports" / "silver_quality_report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps({
+        "checks": {name: passed for name, passed in checks},
+        "row_counts": row_counts,
+    }, indent=2))
+    print(f"Wrote quality report to {report_path}")
 
     spark.stop()
 
