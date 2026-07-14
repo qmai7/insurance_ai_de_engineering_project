@@ -11,6 +11,25 @@ pipeline plan, and warehouse optimization. It describes **what is actually built
 in this repo**, and is explicit about coursework simplifications.
 
 ---
+## Table of contents
+
+- [0. Project architecture](#0-project-architecture)
+- [1. Goal setup](#1-goal-setup)
+- [2. Known, intentional data issues the pipeline must handle](#2-known-intentional-data-issues-the-pipeline-must-handle)
+  - [For offline data (Parquet)](#for-offline-datastored-in-parquet-format)
+  - [For streaming data (JSONL)](#for-streaming-datastored-in-jsonl-format)
+  - [Coursework simplifications](#coursework-simplifications-stated-up-front)
+- [3. Processing jobs](#3-processing-jobs)
+  - [Spark — batch processing](#spark---batch-processing)
+  - [Flink — streaming data processing](#flink---streaming-data-processing)
+- [4. Data storage (ClickHouse)](#4-data-storage)
+- [5. Data pipeline orchestration (Airflow)](#5-data-pipeline-orchestration-airflow)
+- [6. Data governance (DataHub)](#6-data-governance-datahub)
+- [7. Data modeling design](#7-data-modeling-design)
+- [8. Run locally](#8-run-locally)
+- [9. Project structure](#9-project-structure)
+
+---
 ## 0. Project architecture
 ![Project architecture](assets/Project_architecture.png)
 ## 1. Goal setup
@@ -46,7 +65,10 @@ offline/streaming feature tables.
 | payments | 30,000 attempts | payment_id, policy_id, payment_date, amount, payment_method, payment_status |
 | streaming events | 35,926 events (1 day) | event_id, event_type, event_timestamp, created_ts, customer_id, policy_id, geo, channel, device |
 
-  ## 2. **Known, intentional data issues the pipeline must handle: (details found in `generated_insurance_data/quality_report.json`)**
+## 2. Known, intentional data issues the pipeline must handle
+
+Details found in `generated_insurance_data/quality_report.json`.
+
   ### For offline data(stored in .parquet format):
   - **Geography skew** — ~70% of customers in Quebec (drives Spark skew-join tuning).
   - **High Cardinality** —  `"customer_id_distinct_count": 10000`,`"policy_id_distinct_count": 15000`,`"claim_id_distinct_count": 2700`
@@ -62,22 +84,25 @@ offline/streaming feature tables.
   ### **coursework simplifications (stated up front):**
   - The generator is the source system and is run **manually once** before the
     pipeline; it is intentionally **not** part of the Airflow DAG.
-  - Silver/Gold use **full overwrite** rebuilds (idempotent) rather than incremental
-    merge/upsert — justified by the small, deterministic dataset.
-  - Dimensions are **Type-1 (overwrite)**; SCD2 is designed-for but not implemented.
+  - Silver and most Gold tables use **full overwrite** rebuilds (idempotent)
+    rather than incremental merge/upsert — justified by the small, deterministic
+    dataset. The exception is `dim_customer`, which is an **SCD Type 2** merge
+    target (see below) so its version history survives across runs.
+  - `dim_policy` remains **Type-1 (overwrite)**; the same SCD2 pattern used for
+    `dim_customer` could be applied to it if policy-attribute history were needed.
 
 ---
-## 2. Processing jobs
+## 3. Processing jobs
 ### Spark - batch processing  
 Detail doc: [Spark jobs to handle offline data problems ](docs/spark_optimization.md)
 
 ### Flink - streaming data processing
 Detail doc: [Flink job to handle streaming data problems ](docs/flink_optimization.md)
 
-## 3. Data Storage 
+## 4. Data Storage
 ClickHouse - detail doc: [ClickHouse storage-layer optimization ](docs/clickhouse_optimization.md)
 
-## 4. Data Pipeline Orchestration - Batch pipeline (Airflow):
+## 5. Data Pipeline Orchestration (Airflow)
 
 The DAG pipeline is orchestrated by `dags/insurance_batch_pipeline.py`
 
@@ -95,7 +120,7 @@ For the sake of simplicity, data in this project at all layers is stored locally
   (overwrite) to trusted `silver_delta` partitioned by ingest date.
 - **Gold (ClickHouse):** dims, facts, OBT, and `feat_customer_90d`.
 
-## 5. Data Governance (DataHub): 
+## 6. Data Governance (DataHub)
 
 Data Governance is also implemented using DataHub. 
 
@@ -107,179 +132,15 @@ Detail doc: [Data Governance with DataHub ](docs/datahub.md)
 
 - View in the DataHub UI (`http://localhost:9002`)
 
-## 6. Data modeling design
+---
 
-![Data modeling](assets/Data_Modeling.png)
+## 7. Data modeling design
 
-Built by `jobs/gold_clickhouse.py` from trusted Silver Delta tables.
-
-| Dimension | Grain | Keys & columns |
-|---|---|---|
-| `dim_customer` | one per customer | `customer_key` (SK, `dense_rank`), `customer_id` (BK), signup_ts, age, province, city, risk_segment, marketing_opt_in |
-| `dim_policy` | one per policy | `policy_key` (SK), `policy_id` (BK), `customer_key` (FK), policy_type, policy_start_date, policy_end_date, premium_amount, policy_status |
-| `dim_date` | one per calendar date | `date_key` (yyyymmdd), calendar_date, year, month, day, day_of_week, is_weekend |
-
-- `dim_date` is built from the union of all business dates (policy start/end, claim
-  date, payment date), de-duplicated.
-- **SCD strategy:** Type-1 / overwrite. The attributes here (province, risk_segment)
-  could change over time; SCD2 (`valid_from_ts`, `valid_to_ts`, `is_current`) is the
-  documented upgrade path but is **not implemented** at coursework scale.
+Detail doc: [Data Modeling with beaverDB demo](docs/data_modeling.md)
 
 ---
 
-## 3. Fact design
-
-| Fact | Grain | Keys | Measures |
-|---|---|---|---|
-| `fact_claims` | one per claim | customer_key, policy_key, claim_date_key (FKs) | claim_amount; degenerate dims claim_type, claim_status |
-| `fact_payment_attempts` | one per payment attempt (incl. failures) | customer_key, policy_key, payment_date_key (FKs) | amount; degenerate dims payment_method, payment_status |
-
-**Schema-evolution handling.** Old rows with null `payment_method` are preserved
-(`Nullable(String)` in ClickHouse); null `risk_segment` flows through to the customer
-dimension as `Nullable(String)`.
-
-**Deduplication.** Silver removes duplicate business keys with a deterministic
-window (`row_number()` partitioned by the business key, ordered by event time,
-keep newest). Uniqueness is then re-checked in both quality gates (§5).
-
----
-
-## 4. OBT design
-
-| OBT | Grain | Purpose | Core columns |
-|---|---|---|---|
-| `obt_claims_enriched` | one per claim (transaction grain) | denormalized table for claim/loss BI & dashboards — no joins needed | claim_id, claim_date, claim_type, claim_status, claim_amount, policy_id, policy_type, policy_status, premium_amount, policy_start/end_date, claim_to_premium_ratio, customer_id, province, city, risk_segment, age, marketing_opt_in, claim_year, claim_month, claim_day_of_week, claim_is_weekend |
-
-Transaction-grain so BI questions (loss by policy_type/geography/time, loss ratio,
-claim-status mix) resolve from one wide table. Joins claim → policy → customer →
-date; `risk_segment` stays `Nullable` (schema evolution). Partitioned by
-`toYYYYMM(claim_date)`, ordered by `(claim_date, policy_type, province, claim_id)`.
-
----
-
-## 6. Feature store design
-
-Two feature tables are implemented in `gold_insurance` (a future `feat_customer_unified`
-join of the two is documented as next work, not built).
-
-**Offline — `feat_customer_90d`** (`jobs/gold_clickhouse.py`)
-- Grain: one per `customer_id` at `as_of_date` (2025-11-01).
-- Features: `f_customer_avg_claim_amount_90d`, `f_customer_total_claims_90d`,
-  `f_customer_total_claim_amount_90d`, `f_customer_total_payments_90d`,
-  `f_customer_payment_failure_rate_90d`.
-- **Point-in-time correctness:** only claims/payments in
-  `[as_of_date - 90d, as_of_date)` are aggregated — no data later than the
-  reference timestamp leaks in.
-
-**Streaming — `feat_stream_30m`** (Flink + `jobs/stream_features_to_clickhouse.py`)
-- Grain: one per `customer_id` per sliding window (`window_start`, `window_end`).
-- Features: `f_stream_quote_views_30m`, `f_stream_claim_submitted_30m`,
-  `f_stream_payment_failed_30m`, `f_stream_burst_activity_flag`.
-- 30-minute window, 5-minute slide (HOP), event-time with a 5-minute watermark for
-  late events; `window_end` is the point-in-time reference for joins.
-- Latest run: **196,485** feature rows across **9,706** customers.
-
-**Dedup policy.** Offline: dedup by business key + event time in Silver. Streaming:
-event-time windowing with watermark naturally collapses duplicate event_ids inside
-a window.
-
-**Refresh targets.** `feat_customer_90d` ≤ 60 min; `feat_stream_30m` ≤ 5 min
-(matches the Flink window slide).
-
----
-
-## 7. Data pipeline plan & implementation
-
-
-
-### 7.2 Update strategy
-
-- **Bronze:** source files preserved as-is for full reprocessing.
-- **Silver:** publish step uses **`overwrite` + `coalesce(1)`** — one clean,
-  deduplicated copy per table. This is a deliberate deviation from incremental
-  merge: the source is regenerated deterministically, so appending stacked
-  identical copies (a real bug we found: 23 appends → ~23× duplicated rows and
-  1,400+ tiny files — see §8) and merge buys nothing at this scale.
-- **Gold:** each table is `DROP`+`CREATE`+insert (idempotent full refresh).
-- **Backfill:** none by default; re-runs are idempotent (overwrite).
-- **Late data:** streaming handles lateness via a 5-minute Flink watermark; batch
-  re-runs simply reprocess from Bronze.
-
-### 7.3 Streaming pipeline (Kafka → Flink → ClickHouse)
-
-![Data modeling](assets/Streaming_data.png)
-
-```text
-generated JSONL events
-  -> jobs/stream_json_to_kafka.py     -> Kafka topic insurance_events_raw
-  -> jobs/verify_kafka_topic.py       (gate: topic non-empty)
-  -> Flink HOP-window SQL job          (flink/insurance_stream_features.sql,
-                                        submitted via flink/run_flink_stream_job.sh)
-  -> Kafka topic insurance_events_features
-  -> jobs/stream_features_to_clickhouse.py -> gold_insurance.feat_stream_30m
-  -> jobs/publish_streaming_lineage.py (DataHub lineage)
-```
-
-The vanilla Flink image has no Kafka connector, so
-`flink-sql-connector-kafka-3.2.0-1.18.jar` is placed in `flink/` (mounted into the
-Flink containers) and attached at submit time. The streaming steps are currently
-run via the documented scripts (a DAG/host-script wrapper is optional future work).
-
-### 7.4 Operational controls & monitoring
-
-- **Quality gates per run** — schema/uniqueness/null/referential/measure checks at
-  Silver and Gold (§5).
-- **Retry/recovery** — DAG `default_args`: 2 retries, 3-minute backoff,
-  30-minute task timeout.
-- **Run metadata** — `sql/init_postgres.sql` defines
-  `pipeline_metadata.pipeline_run_log` (run_id, timings, status, row counts, error
-  summary) as the intended run-log target (population is future work).
-- **Schedule** — currently `schedule_interval=None` (manual trigger only),
-  `catchup=False`. Was `*/30 * * * *` for the SLA simulation.
-
-
-
-
----
-
-## 8. Warehouse optimization
-
-### 8.1 Spark optimizations (applied, with rationale)
-
- partition
-coalescing; `shuffle.partitions=8` for local scale; Kryo serializer; **broadcast
-joins** for small dimensions in the Gold job; Delta partitioning in Silver staging
-(`policy_type`, `claim_date`, `payment_dt`); `cache()`+`unpersist()` where a frame
-is counted then written.
-
-### 8.2 ClickHouse optimizations (applied, with rationale)
-
-- **Storage/layout:** `MergeTree` with a sorting key (`ORDER BY`) per table chosen
-  for common filters/joins (e.g. `dim_policy` by `(policy_type, policy_id)`,
-  facts by `(date_key, customer_key, policy_key, id)`).
-- **Partitioning:** facts `PARTITION BY intDiv(date_key, 100)` to prune by date
-  range.
-- **Encoding:** `LowCardinality(String)` on categorical columns (province, city,
-  policy_type, statuses) to shrink storage and speed grouping.
-- Before/after metrics for ClickHouse were not formally captured at this dataset
-  size (honest scope note); choices follow ClickHouse OLAP best practice.
-
----
-
-## 9. Known limitations / future work
-
-- Dimensions are Type-1; **SCD2** not implemented.
-- Silver/Gold use full overwrite; **incremental merge/upsert** not implemented.
-- `feat_customer_unified` (offline+streaming join) not built.
-- `pipeline_run_log` is defined but not yet populated.
-- `f_stream_burst_activity_flag` is computed per-customer-per-window
-  (`COUNT(*) >= 10`) and never triggers on this data, because bursts are *global*
-  traffic spikes spread across ~10k customers — a known feature-definition gap.
-- Streaming steps run via scripts; an Airflow/host wrapper is optional next work.
-
----
-
-## 10. Run locally
+## 8. Run locally
 
 ```bash
 docker compose up -d
@@ -306,22 +167,68 @@ docker exec insurance_airflow_scheduler python /opt/airflow/jobs/publish_streami
 - DataHub: `http://localhost:9002`
 - PostgreSQL (Airflow/DataHub metadata only): `localhost:5432`
 
-### Main files
-| Path | Purpose |
-|---|---|
-| `docker-compose.yml` | All local services (Postgres, ClickHouse, Kafka, Flink, Airflow, DataHub). |
-| `dags/insurance_batch_pipeline.py` | Batch DAG (manual trigger in Airflow UI). |
-| `jobs/insurance_data_generator.py` | Synthetic source data with intentional issues. |
-| `jobs/silver_cleaning_delta.py` | Bronze → Silver Delta cleaning. |
-| `jobs/silver_quality_checks.py` | Silver quality gate. |
-| `jobs/publish_silver_delta.py` | Promote validated staging → trusted Silver (overwrite). |
-| `jobs/gold_clickhouse.py` | Silver → Gold dims/facts/OBT/`feat_customer_90d`. |
-| `jobs/quality_checks_clickhouse.py` | Gold quality gate → `quality_check_results`. |
-| `jobs/stream_json_to_kafka.py` | Replay JSONL → Kafka `insurance_events_raw`. |
-| `jobs/verify_kafka_topic.py` | Verify raw topic is non-empty. |
-| `flink/insurance_stream_features.sql` | Flink HOP-window streaming features. |
-| `flink/run_flink_stream_job.sh` | Submit the Flink SQL job with the Kafka connector. |
-| `jobs/stream_features_to_clickhouse.py` | Kafka features topic → `feat_stream_30m`. |
-| `jobs/publish_datahub_lineage.py` | Batch + Airflow lineage to DataHub. |
-| `jobs/publish_streaming_lineage.py` | Streaming + Flink lineage to DataHub. |
-| `sql/init_clickhouse.sql`, `sql/init_postgres.sql` | Service init (Gold DB, run-log table). |
+## 9. Project structure
+
+```text
+insurance_ai_de_engineering_project/
+├── README.md                         # This document — architecture, design, and run guide
+├── docker-compose.yml                # All services: Airflow, Postgres, ClickHouse, Kafka, Flink, DataHub
+├── dockerfile.airflow                # Custom Airflow image (adds Spark, Delta, project Python deps)
+├── pyproject.toml                    # Python project metadata & dependencies (uv-managed)
+├── uv.lock                           # Pinned dependency lockfile for reproducible envs
+├── main.py                           # Placeholder entrypoint (not part of the pipeline)
+├── .env.example                      # Template for required env vars (copy to .env)
+│
+├── dags/
+│   └── insurance_batch_pipeline.py   # Airflow DAG: validate Bronze → Silver → quality gate → Gold → gold gate → lineage
+│
+├── jobs/                             # All processing scripts run by the DAG or manually
+│   ├── insurance_data_generator.py   # Source-system simulator: generates synthetic Bronze data (seed=42)
+│   ├── silver_cleaning_delta.py      # Spark: Bronze Parquet → cleaned Silver Delta staging (AQE, skew-join, dedup)
+│   ├── silver_quality_checks.py      # Silver gate: null keys, duplicate IDs, invalid measures — fails fast
+│   ├── publish_silver_delta.py       # Promotes validated staging → trusted silver_delta (overwrite, partitioned)
+│   ├── gold_clickhouse.py            # Spark: Silver Delta → Gold ClickHouse (dims, facts, OBT, SCD2 dim_customer, features)
+│   ├── quality_checks_clickhouse.py  # Gold gate: BK uniqueness, FK availability, non-negative measures, feature ranges
+│   ├── publish_datahub_lineage.py    # Registers batch dataset lineage (Bronze→Silver→Gold) in DataHub
+│   ├── stream_json_to_kafka.py       # Replays generated JSONL events into Kafka topic insurance_events_raw
+│   ├── verify_kafka_topic.py         # Streaming gate: confirms the raw topic exists and is non-empty
+│   ├── stream_features_to_clickhouse.py  # Consumes Flink feature topic → ClickHouse feat_stream_30m
+│   └── publish_streaming_lineage.py  # Registers streaming lineage (file→Kafka→Flink→Kafka→ClickHouse) in DataHub
+│
+├── flink/                            # Streaming feature-engineering job
+│   ├── insurance_stream_features.sql # Flink SQL: event-time HOP-window aggregation over the raw topic
+│   ├── run_flink_stream_job.sh       # Submits the SQL job to the cluster via the Flink SQL client
+│   └── flink-sql-connector-kafka-3.2.0-1.18.jar  # Kafka connector JAR (committed so streaming works out of the box)
+│
+├── docs/                             # Deep-dive documentation referenced from this README
+│   ├── spark_optimization.md         # Spark tuning for offline data problems (skew, cardinality, dedup, SCD)
+│   ├── flink_optimization.md         # Flink streaming tuning (watermarks, late arrivals, bursts, shuffle)
+│   ├── clickhouse_optimization.md    # ClickHouse storage-layer / OLAP optimization
+│   ├── datahub.md                    # Data governance: batch & streaming lineage, quality expectations
+│   └── data_modeling.md              # Star schema / OBT / SCD2 modeling design (with demo)
+│
+├── generated_insurance_data/         # Output of the data generator (gitignored, regenerable)
+│   ├── generator_config.json         # Config/parameters the run was generated with
+│   ├── offline/                      # Bronze offline sources as Parquet
+│   │   ├── policyholders/            # part_old.parquet + part_new.parquet (drives schema evolution)
+│   │   ├── policies.parquet
+│   │   ├── claims.parquet            # Contains intentional ~2% duplicate rows
+│   │   └── payments.parquet
+│   ├── streaming/
+│   │   └── insurance_events.jsonl    # Bronze streaming events (duplicates, bursts, late arrivals)
+│   └── reports/
+│       └── quality_report.json       # Documented, intentional data-quality issues in the generated data
+│
+├── assets/                           # Images embedded in the docs (architecture, DAG, lineage, benchmarks)
+│   └── data_modeling/                # Data-modeling diagrams (star schema, SCD2, final tables)
+│
+├── silver_delta_staging/             # Candidate Silver Delta tables before the quality gate (gitignored, runtime)
+├── silver_delta/                     # Trusted, published Silver Delta tables (gitignored, runtime)
+├── gold/                             # Local Gold scratch/mount dir (gitignored, runtime)
+├── datahub/                          # DataHub local runtime state (gitignored, runtime)
+└── logs/                             # Airflow task logs (gitignored, runtime)
+```
+
+> **Note on runtime dirs.** `generated_insurance_data/`, `silver_delta*/`, `gold/`,
+> `datahub/`, and `logs/` are gitignored. They are produced at runtime by the
+> generator and the pipeline, and are fully regenerable — they are not committed.

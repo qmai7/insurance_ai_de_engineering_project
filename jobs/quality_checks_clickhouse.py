@@ -26,7 +26,13 @@ CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
 CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "gold_insurance")
 
 CHECKS = [
-    ("dim_customer_unique_customer_id", "select count() from (select customer_id from gold_insurance.dim_customer group by customer_id having count() > 1)"),
+    # dim_customer is SCD Type 2: customer_id repeats across versions, so the
+    # invariants are (a) the surrogate key is unique per version, (b) each
+    # customer has exactly one current version, and (c) every open version has
+    # a null valid_to_ts while every closed one has a non-null valid_to_ts.
+    ("dim_customer_unique_customer_key", "select count() from (select customer_key from gold_insurance.dim_customer group by customer_key having count() > 1)"),
+    ("dim_customer_one_current_per_id", "select count() from (select customer_id from gold_insurance.dim_customer where is_current group by customer_id having count() <> 1)"),
+    ("dim_customer_scd2_validity_consistent", "select count() from gold_insurance.dim_customer where (is_current and valid_to_ts is not null) or (not is_current and valid_to_ts is null)"),
     ("dim_policy_unique_policy_id", "select count() from (select policy_id from gold_insurance.dim_policy group by policy_id having count() > 1)"),
     ("fact_claim_unique_claim_id", "select count() from (select claim_id from gold_insurance.fact_claims group by claim_id having count() > 1)"),
     ("fact_payment_unique_payment_id", "select count() from (select payment_id from gold_insurance.fact_payment_attempts group by payment_id having count() > 1)"),
