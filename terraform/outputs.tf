@@ -36,3 +36,13 @@ output "ksa_annotation" {
 output "network_name" {
   value = module.network.network_name
 }
+
+output "registry_url" {
+  description = "Base URL for image tags."
+  value       = module.registry.repository_url
+}
+
+output "docker_auth_command" {
+  description = "Run once per machine before pushing images."
+  value       = module.registry.docker_auth_command
+}

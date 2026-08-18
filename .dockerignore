@@ -1,0 +1,37 @@
+# Keep the build context small. Without this, the whole repo is sent to the
+# daemon on every build — including the virtualenv and every generated Parquet
+# file, none of which belong in the image.
+
+.venv/
+venv/
+# Leading **/ because .dockerignore patterns anchor at the context root —
+# a bare "__pycache__/" would miss dags/__pycache__ and jobs/__pycache__.
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Runtime data. Bronze now lives in GCS, and Silver/Gold are produced by the
+# pipeline — baking a stale copy into the image would be actively misleading.
+generated_insurance_data/
+silver_delta/
+silver_delta_staging/
+silver/
+gold/
+reports/
+logs/
+datahub/
+spark-warehouse/
+metastore_db/
+
+# Infrastructure and VCS state, irrelevant to the runtime image.
+terraform/
+.git/
+.github/
+assets/
+docs/
+*.md
+
+# Local config and secrets
+.env
+*.tfstate*

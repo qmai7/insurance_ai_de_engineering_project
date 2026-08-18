@@ -67,6 +67,17 @@ module "storage" {
   depends_on = [google_project_service.required]
 }
 
+module "registry" {
+  source = "./modules/registry"
+
+  project_id  = var.project_id
+  region      = var.region
+  name_prefix = var.name_prefix
+  labels      = local.common_labels
+
+  depends_on = [google_project_service.required]
+}
+
 module "gke" {
   source = "./modules/gke"
 

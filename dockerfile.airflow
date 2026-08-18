@@ -33,3 +33,11 @@ RUN pip install --no-cache-dir \
     clickhouse-connect==0.8.6 \
     kafka-python==2.0.2 \
     acryl-datahub==1.5.0.6
+
+# DAGs and job code are baked in rather than bind-mounted as they were under
+# Docker Compose. Every Airflow task is a separate pod here, and baking them
+# means the scheduler and every task pod are guaranteed to run identical code —
+# the image tag becomes the unit of deployment. The tradeoff is a rebuild per
+# code change, which is what the CI/CD pipeline in §8 automates.
+COPY --chown=airflow:root dags/ /opt/airflow/dags/
+COPY --chown=airflow:root jobs/ /opt/airflow/jobs/
