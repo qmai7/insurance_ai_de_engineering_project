@@ -31,6 +31,19 @@ logs/
 *.env
 !.env.example
 
+# Terraform — provider binaries, state, and plan files.
+# terraform.tfvars IS committed (no secrets in it) so sessions are reproducible.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+# Local overrides only, never the pinned tfvars
+*.auto.tfvars
+override.tf
+override.tf.json
+
 # OS / editor junk
 .DS_Store
 .idea/
