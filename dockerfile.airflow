@@ -3,9 +3,27 @@ FROM apache/airflow:2.9.3-python3.10
 USER root
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends default-jre-headless procps \
+    && apt-get install -y --no-install-recommends default-jre-headless procps curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# GCS connector for Spark, baked in rather than resolved from Maven at job start.
+#
+# Every Airflow task is its own pod in the cluster, so Ivy resolution would repeat
+# the download on each task and fail outright if the cluster had no egress.
+#
+# The version is pinned to the 3.0.x line because the connector links against
+# Hadoop internals: Spark 3.5.1 bundles Hadoop 3.3.4, and connector 3.1.x targets
+# Hadoop 3.4 and fails at read time with NoSuchMethodError on VectoredReadUtils.
+# Bumping Spark means revisiting this pin. 3.0.x is also the oldest line that
+# understands fs.gs.auth.type=APPLICATION_DEFAULT, which is what lets the same
+# code authenticate via Workload Identity in-cluster and via gcloud ADC locally.
+ARG GCS_CONNECTOR_VERSION=3.0.19
+RUN mkdir -p /opt/spark-jars \
+    && curl -fsSL \
+       "https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/gcs-connector/${GCS_CONNECTOR_VERSION}/gcs-connector-${GCS_CONNECTOR_VERSION}-shaded.jar" \
+       -o /opt/spark-jars/gcs-connector-hadoop3-shaded.jar \
+    && chmod 0644 /opt/spark-jars/gcs-connector-hadoop3-shaded.jar
 
 USER airflow
 
@@ -15,4 +33,3 @@ RUN pip install --no-cache-dir \
     clickhouse-connect==0.8.6 \
     kafka-python==2.0.2 \
     acryl-datahub==1.5.0.6
-

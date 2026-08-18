@@ -14,46 +14,21 @@ After a successful publish, the staging folder is deleted so failed or old
 candidate data cannot be accidentally reused in a future run.
 """
 
-from pathlib import Path
-import shutil
-
-from delta import configure_spark_with_delta_pip
+import lakehouse
 from pyspark.sql import SparkSession
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-SILVER_STAGING_DIR = BASE_DIR / "silver_delta_staging"
-SILVER_TRUSTED_DIR = BASE_DIR / "silver_delta"
-TABLES = ["policyholders", "policies", "claims", "payments"]
+TABLES = lakehouse.SILVER_TABLES
 PARTITION_COLS = ["ingest_year", "ingest_month", "ingest_day"]
 
 
-def create_spark_session() -> SparkSession:
-    builder = (
-        SparkSession.builder
-        .appName("insurance_publish_silver_delta")
-        .master("local[*]")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .config("spark.sql.adaptive.enabled", "true")
-        .config("spark.sql.shuffle.partitions", "8")
-        # Use RawLocalFileSystem so Spark does not write hidden .crc checksum
-        # sidecar files next to every file it touches. The AbstractFileSystem
-        # variant covers Delta's transaction-log writes, which go through the
-        # Hadoop FileContext API and would otherwise still emit a .crc per commit.
-        .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem")
-        .config("spark.hadoop.fs.AbstractFileSystem.file.impl", "org.apache.hadoop.fs.local.RawLocalFs")
-    )
-    return configure_spark_with_delta_pip(builder).getOrCreate()
-
-
 def publish_table(spark: SparkSession, table_name: str) -> None:
-    staging_path = SILVER_STAGING_DIR / table_name
-    trusted_path = SILVER_TRUSTED_DIR / table_name
+    staging_path = lakehouse.silver_staging_path(table_name)
+    trusted_path = lakehouse.silver_trusted_path(table_name)
 
-    if not staging_path.exists():
+    if not lakehouse.path_exists(spark, staging_path):
         raise FileNotFoundError(f"Cannot publish missing staging table: {staging_path}")
 
-    df = spark.read.format("delta").load(str(staging_path))
+    df = spark.read.format("delta").load(staging_path)
     row_count = df.count()
     print(f"Publishing {table_name}: rows={row_count}")
 
@@ -64,34 +39,37 @@ def publish_table(spark: SparkSession, table_name: str) -> None:
         .mode("overwrite")
         .option("overwriteSchema", "true")
         .partitionBy(*PARTITION_COLS)
-        .save(str(trusted_path))
+        .save(trusted_path)
     )
 
 
 def main() -> None:
-    if not SILVER_STAGING_DIR.exists():
-        raise FileNotFoundError(f"Missing staging folder: {SILVER_STAGING_DIR}")
+    spark = lakehouse.create_spark_session("insurance_publish_silver_delta")
+    print(f"storage: {lakehouse.describe_locations()}")
 
-    SILVER_TRUSTED_DIR.mkdir(parents=True, exist_ok=True)
-    spark = create_spark_session()
+    staging_root = lakehouse.silver_staging_path()
+    if not lakehouse.path_exists(spark, staging_root):
+        raise FileNotFoundError(f"Missing staging location: {staging_root}")
 
     for table_name in TABLES:
         publish_table(spark, table_name)
 
+    # Clear staging only after every table has been published successfully, so
+    # stale candidate data cannot be reused by a later run. Children are removed
+    # individually rather than deleting the root: locally the root is a
+    # bind-mounted volume and unlinking the mount point raises EBUSY, and on GCS
+    # keeping the prefix stable avoids surprising a later reader with a
+    # nonexistent path.
+    #
+    # Done before spark.stop() — these deletes go through the Hadoop FileSystem
+    # API, which needs the session's Hadoop configuration for GCS credentials.
+    for child in lakehouse.list_children(spark, staging_root):
+        lakehouse.delete_path(spark, child)
+
     spark.stop()
 
-    # Clear staging only after every table has been published successfully, so
-    # stale candidate data cannot be reused by a later run. We empty the
-    # directory's contents instead of deleting the directory itself, because
-    # silver_delta_staging is a bind-mounted volume (see docker-compose.yml) and
-    # removing the mount point raises OSError: [Errno 16] Device or resource busy.
-    for child in SILVER_STAGING_DIR.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-    print(f"Published trusted Silver Delta tables to: {SILVER_TRUSTED_DIR}")
-    print(f"Cleared staging contents in: {SILVER_STAGING_DIR}")
+    print(f"Published trusted Silver Delta tables to: {lakehouse.silver_trusted_path()}")
+    print(f"Cleared staging contents in: {staging_root}")
 
 
 if __name__ == "__main__":

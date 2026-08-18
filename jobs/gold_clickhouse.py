@@ -35,16 +35,12 @@ from __future__ import annotations
 import hashlib
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Tuple
 
 import clickhouse_connect
-from delta import configure_spark_with_delta_pip
+import lakehouse
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-SILVER_DIR = BASE_DIR / "silver_delta"
 
 CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "clickhouse")
 CLICKHOUSE_PORT = int(os.getenv("CLICKHOUSE_PORT", "8123"))
@@ -54,27 +50,13 @@ CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "gold_insurance")
 
 
 def spark_session() -> SparkSession:
-    """Create Spark with Delta support and local-coursework optimization settings."""
-    builder = (
-        SparkSession.builder.appName("gold_clickhouse_modeling")
-        .master("local[*]")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .config("spark.sql.adaptive.enabled", "true")
-        .config("spark.sql.adaptive.skewJoin.enabled", "true")
-        .config("spark.sql.shuffle.partitions", "8")
-        # Use RawLocalFileSystem so Spark does not write hidden .crc checksum
-        # sidecar files when reading/writing local Delta tables. The
-        # AbstractFileSystem variant covers Delta's transaction-log writes.
-        .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem")
-        .config("spark.hadoop.fs.AbstractFileSystem.file.impl", "org.apache.hadoop.fs.local.RawLocalFs")
-    )
-    return configure_spark_with_delta_pip(builder).getOrCreate()
+    """Create Spark with Delta support and the shared pipeline tuning."""
+    return lakehouse.create_spark_session("gold_clickhouse_modeling")
 
 
 def read_delta(spark: SparkSession, name: str):
-    """Read one trusted Silver Delta table by folder name."""
-    return spark.read.format("delta").load(str(SILVER_DIR / name))
+    """Read one trusted Silver Delta table by name."""
+    return spark.read.format("delta").load(lakehouse.silver_trusted_path(name))
 
 
 def reset_managed_table(spark: SparkSession, table_name: str) -> None:
@@ -329,6 +311,8 @@ def scd2_merge_dim_customer(client, spark, ph, run_ts: datetime):
 
 def main() -> None:
     spark = spark_session()
+    print(f"storage: {lakehouse.describe_locations()}")
+    print(f"clickhouse: {CLICKHOUSE_HOST}:{CLICKHOUSE_PORT}/{CLICKHOUSE_DATABASE}")
     client = clickhouse_client()
     client.command(f"CREATE DATABASE IF NOT EXISTS {CLICKHOUSE_DATABASE}")
 

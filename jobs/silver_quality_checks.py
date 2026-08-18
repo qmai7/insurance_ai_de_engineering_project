@@ -12,35 +12,14 @@ or Deequ, and results could be published to a data quality dashboard.
 
 import json
 import sys
-from pathlib import Path
 
-from delta import configure_spark_with_delta_pip
+import lakehouse
 from pyspark.sql import SparkSession, functions as F
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-SILVER_STAGING_DIR = BASE_DIR / "silver_delta_staging"
-
-
-def create_spark_session() -> SparkSession:
-    """Create Spark with Delta support so we can read Silver Delta tables."""
-    builder = (
-        SparkSession.builder
-        .appName("silver_delta_quality_gate")
-        .master("local[*]")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        # Use RawLocalFileSystem so Spark does not write hidden .crc checksum
-        # sidecar files next to every file it touches. The AbstractFileSystem
-        # variant covers Delta's transaction-log writes (Hadoop FileContext API).
-        .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem")
-        .config("spark.hadoop.fs.AbstractFileSystem.file.impl", "org.apache.hadoop.fs.local.RawLocalFs")
-    )
-    return configure_spark_with_delta_pip(builder).getOrCreate()
 
 
 def read_delta(spark: SparkSession, table_name: str):
-    """Read one Silver table from the local Delta Lake folder."""
-    return spark.read.format("delta").load(str(SILVER_STAGING_DIR / table_name))
+    """Read one candidate Silver table from the staging layer."""
+    return spark.read.format("delta").load(lakehouse.silver_staging_path(table_name))
 
 
 def duplicate_count(df, key_column: str) -> int:
@@ -49,7 +28,8 @@ def duplicate_count(df, key_column: str) -> int:
 
 
 def main() -> None:
-    spark = create_spark_session()
+    spark = lakehouse.create_spark_session("silver_delta_quality_gate")
+    print(f"storage: {lakehouse.describe_locations()}")
 
     tables = {
         "policyholders": (read_delta(spark, "policyholders"), "customer_id"),
@@ -80,13 +60,16 @@ def main() -> None:
 
     # Persist real results so DataHub can publish the actual outcome of this
     # gate instead of a placeholder (read by publish_datahub_lineage.py).
-    report_path = BASE_DIR / "reports" / "silver_quality_report.json"
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps({
+    #
+    # This goes to the lakehouse, not local disk. The task that reads it back is
+    # a different Airflow task, which on Kubernetes means a different pod with a
+    # different filesystem — a local file here would simply not exist by then.
+    report_uri = lakehouse.report_path("silver_quality_report.json")
+    lakehouse.write_text(spark, report_uri, json.dumps({
         "checks": {name: passed for name, passed in checks},
         "row_counts": row_counts,
     }, indent=2))
-    print(f"Wrote quality report to {report_path}")
+    print(f"Wrote quality report to {report_uri}")
 
     spark.stop()
 

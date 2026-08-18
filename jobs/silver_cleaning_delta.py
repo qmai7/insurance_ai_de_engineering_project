@@ -13,41 +13,9 @@ Important Spark optimization choices included here:
 - Partitioned Delta writes: improves pruning for common date/type filters.
 """
 
-from pathlib import Path
-
-from delta import configure_spark_with_delta_pip
+import lakehouse
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.window import Window
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-BRONZE_DIR = BASE_DIR / "generated_insurance_data" / "offline"
-SILVER_STAGING_DIR = BASE_DIR / "silver_delta_staging"
-
-
-def create_spark_session() -> SparkSession:
-    """Create a local Spark session with Delta Lake and tuning options enabled."""
-    builder = (
-        SparkSession.builder
-        .appName("insurance_silver_delta_cleaning")
-        .master("local[*]")
-        # Required Delta Lake configs.
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        # Spark optimization/tuning configs from the course.
-        .config("spark.sql.adaptive.enabled", "true")
-        .config("spark.sql.adaptive.skewJoin.enabled", "true")
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
-        .config("spark.sql.shuffle.partitions", "8")
-        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-        .config("spark.sql.autoBroadcastJoinThreshold", "20MB")
-        # Use RawLocalFileSystem so Spark does not write a hidden .crc checksum
-        # sidecar next to every file. Harmless on local coursework storage and
-        # keeps the Delta folders far less cluttered. The AbstractFileSystem
-        # variant covers Delta's transaction-log writes (Hadoop FileContext API).
-        .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem")
-        .config("spark.hadoop.fs.AbstractFileSystem.file.impl", "org.apache.hadoop.fs.local.RawLocalFs")
-    )
-    return configure_spark_with_delta_pip(builder).getOrCreate()
 
 
 def read_bronze_table(spark: SparkSession, table_name: str):
@@ -63,10 +31,10 @@ def read_bronze_table(spark: SparkSession, table_name: str):
             spark.read
             # We use "mergeSchema" to reconcile the old which doesn't have "risk_segment" column with the new which does. This fills risk_segment with nulls for legacy records
             .option("mergeSchema", "true")
-            .parquet(str(BRONZE_DIR / "policyholders"))
+            .parquet(lakehouse.bronze_path("policyholders"))
         )
 
-    return spark.read.parquet(str(BRONZE_DIR / f"{table_name}.parquet"))
+    return spark.read.parquet(lakehouse.bronze_path(f"{table_name}.parquet"))
 
 
 def write_delta_table(df, table_name: str, partition_cols=None) -> None:
@@ -74,7 +42,7 @@ def write_delta_table(df, table_name: str, partition_cols=None) -> None:
     writer = df.write.format("delta").mode("overwrite").option("overwriteSchema", "true")
     if partition_cols:
         writer = writer.partitionBy(*partition_cols)
-    writer.save(str(SILVER_STAGING_DIR / table_name))
+    writer.save(lakehouse.silver_staging_path(table_name))
 
 
 def deduplicate_by_key(df, key_column: str, order_column: str):
@@ -173,8 +141,11 @@ def clean_payments(spark):
 
 
 def main():
-    spark = create_spark_session()
-    SILVER_STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    spark = lakehouse.create_spark_session("insurance_silver_delta_cleaning")
+    print(f"storage: {lakehouse.describe_locations()}")
+
+    # No directory pre-creation: object stores have no directories, and Delta
+    # creates the prefix on first write. Locally, Spark does the same.
 
     # Each tuple contains the cleaned dataframe and the partition columns for the Delta write.
     tables = {
