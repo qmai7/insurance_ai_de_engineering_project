@@ -76,12 +76,17 @@ GCS_CONNECTOR_JAR = os.getenv("GCS_CONNECTOR_JAR", "/opt/spark-jars/gcs-connecto
 # Fallback when that jar is absent — a laptop testing against the bucket rather
 # than a task pod. Resolved from Maven at startup, which is slow and needs
 # egress, so it is a convenience path and not what runs in the cluster.
-# 3.0.x pairs with Hadoop 3.3.x, which is what Spark 3.5.1 in the image bundles.
-# The connector is tightly coupled to Hadoop's internals: 3.1.x targets Hadoop
-# 3.4 and dies against 3.3 with NoSuchMethodError on VectoredReadUtils, so this
-# version travels with the Spark version and is not a free upgrade.
+# The connector links against Hadoop internals, so its version travels with
+# Spark's bundled Hadoop and is not a free upgrade. Spark 3.5.1 ships Hadoop
+# 3.3.4, and both newer connector lines were tried and rejected against it:
+#
+#   3.1.x  -> NoSuchMethodError  VectoredReadUtils.validateRangeRequest  (wants Hadoop 3.4)
+#   3.0.19 -> NoClassDefFoundError Options$OpenFileOptions               (wants Hadoop >= 3.3.5)
+#
+# The 2.2.x line is the one built against Hadoop 3.3.x, and is what actually
+# reads and writes GCS under Spark 3.5.1. Revisit only alongside a Spark upgrade.
 GCS_CONNECTOR_PACKAGE = os.getenv(
-    "GCS_CONNECTOR_PACKAGE", "com.google.cloud.bigdataoss:gcs-connector:3.0.19"
+    "GCS_CONNECTOR_PACKAGE", "com.google.cloud.bigdataoss:gcs-connector:hadoop3-2.2.30"
 )
 
 
@@ -155,14 +160,21 @@ def create_spark_session(app_name: str, extra_conf: dict | None = None) -> Spark
             builder
             .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
             .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
-            # Auth via the full Application Default Credentials chain, which
-            # resolves to the GKE metadata server under Workload Identity in the
-            # cluster and to gcloud's ADC file on a developer laptop. No key file
-            # exists in either case.
+            # Auth with no key file anywhere. Under Workload Identity the
+            # connector gets short-lived credentials from the GKE metadata
+            # server.
             #
-            # This needs connector 3.x. The 2.2.x line does not understand
-            # fs.gs.auth.type and silently authenticates against the GCE
-            # metadata server only, which fails anywhere outside GCP.
+            # Both property spellings are set because the name changed across
+            # connector lines — 2.2.x reads google.cloud.auth.service.account.*,
+            # 3.x reads fs.gs.auth.type — and Hadoop ignores keys it does not
+            # know. That keeps this working if the connector is ever bumped
+            # alongside a Spark upgrade.
+            #
+            # Note the 2.2.x limitation: it resolves credentials via the GCE
+            # metadata server rather than the full ADC chain, so it authenticates
+            # in-cluster but not from a laptop using `gcloud auth
+            # application-default login`. Local runs should use local paths.
+            .config("spark.hadoop.google.cloud.auth.service.account.enable", "true")
             .config("spark.hadoop.fs.gs.auth.type", "APPLICATION_DEFAULT")
         )
         if GCP_PROJECT:

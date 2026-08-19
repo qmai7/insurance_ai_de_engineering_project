@@ -1,0 +1,225 @@
+##
+# Values for the official apache-airflow chart (version 1.15.0, Airflow 2.9.3).
+#
+# Deployed as:
+#   helm upgrade --install airflow apache-airflow/airflow \
+#     --version 1.15.0 -n data-ns -f charts/airflow/values.yaml
+#
+# The chart version is pinned to 1.15.0 because its default appVersion is 2.9.3,
+# matching the Airflow in our image exactly. Chart 1.17+ defaults to Airflow 3.x,
+# which would break this project's DAG — `schedule_interval` and
+# `airflow.operators.bash` both changed in 3.0.
+##
+
+# Must agree with the image, or the chart renders config for the wrong version.
+airflowVersion: "2.9.3"
+
+# Each task becomes its own pod. This is the whole reason the batch jobs were
+# moved off local disk: with CeleryExecutor a shared worker filesystem would let
+# the old local-path handoffs keep working by accident, hiding the problem until
+# something scaled.
+executor: "KubernetesExecutor"
+
+images:
+  airflow:
+    repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark
+    tag: "0.1.2"
+    # Tags are immutable per build, so there is no reason to re-pull on restart.
+    pullPolicy: IfNotPresent
+  # Same image for executor pods, so DAG code and task code cannot drift.
+  pod_template:
+    repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark
+    tag: "0.1.2"
+    pullPolicy: IfNotPresent
+
+# Applied to every Airflow container, which matters because scheduler and task
+# pods both need them — the task pods are where the Spark jobs actually run.
+env:
+  - name: LAKEHOUSE_ROOT
+    value: "gs://aide-playground-lakehouse"
+  - name: GCP_PROJECT
+    value: "aide-playground"
+  # Spark's managed-table warehouse and the Derby metastore. /tmp is the only
+  # reliably writable path in the task pod; this state is scratch consumed within
+  # a single job, so losing it with the pod is correct.
+  - name: SPARK_SCRATCH_DIR
+    value: "/tmp"
+  - name: CLICKHOUSE_HOST
+    value: "clickhouse"
+  # Must be set explicitly, and not because the default is wrong.
+  #
+  # Kubernetes injects service-link variables for every Service in the namespace,
+  # so the Service named `clickhouse` produces CLICKHOUSE_PORT=tcp://10.x.x.x:8123
+  # — which collides with this exact variable and makes int() blow up:
+  #
+  #   ValueError: invalid literal for int() with base 10: 'tcp://10.30.3.250:8123'
+  #
+  # An explicit entry here wins over the injected one. A hazard with no
+  # docker-compose equivalent, and one that will recur for any future Service
+  # whose name matches a config prefix (kafka, redis).
+  - name: CLICKHOUSE_PORT
+    value: "8123"
+  - name: CLICKHOUSE_DATABASE
+    value: "gold_insurance"
+
+# ---------------------------------------------------------------------------
+# Identity
+#
+# Every component runs as the pre-existing `airflow` KSA rather than the chart's
+# generated per-component accounts. That KSA is the one Terraform granted
+# roles/iam.workloadIdentityUser on (data-ns/airflow), so it is the only identity
+# that can reach the lakehouse. Letting the chart create its own would produce
+# service accounts with no GCS access and a confusing permission error at the
+# first Spark read.
+# ---------------------------------------------------------------------------
+serviceAccountName: &sa airflow
+
+webserver:
+  serviceAccount:
+    create: false
+    name: *sa
+  replicas: 1
+  resources:
+    requests:
+      cpu: 300m
+      memory: 1Gi
+    limits:
+      cpu: 800m
+      memory: 1Gi
+  # Coursework credentials, matching Part 1's admin/admin. Not a real secret:
+  # the webserver is not internet-exposed at this step, and §10's gateway adds
+  # basic auth plus HTTPS later.
+  defaultUser:
+    enabled: true
+    username: admin
+    password: admin
+    role: Admin
+    email: admin@example.com
+    firstName: Airflow
+    lastName: Admin
+
+scheduler:
+  serviceAccount:
+    create: false
+    name: *sa
+  replicas: 1
+  resources:
+    requests:
+      cpu: 300m
+      memory: 1Gi
+    limits:
+      cpu: 800m
+      memory: 1Gi
+
+# Sizing for the executor task pods, which is where Spark actually runs. Spark in
+# local[*] mode needs real headroom for the driver JVM — the default request
+# would get the JVM OOM-killed, surfacing as an opaque task failure rather than
+# an obvious memory error.
+workers:
+  serviceAccount:
+    create: false
+    name: *sa
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 4Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+migrateDatabaseJob:
+  serviceAccount:
+    create: false
+    name: *sa
+  useHelmHooks: false
+
+createUserJob:
+  serviceAccount:
+    create: false
+    name: *sa
+  useHelmHooks: false
+
+cleanup:
+  serviceAccount:
+    create: false
+    name: *sa
+
+# ---------------------------------------------------------------------------
+# Disabled components
+# ---------------------------------------------------------------------------
+
+# Redis and Flower exist to serve CeleryExecutor; KubernetesExecutor uses neither.
+redis:
+  enabled: false
+flower:
+  enabled: false
+
+# No deferrable operators in this pipeline, so the triggerer would be an idle
+# billed pod.
+triggerer:
+  enabled: false
+
+# The scheduler parses DAGs itself in 2.9; a standalone processor is for scale
+# this project does not have.
+dagProcessor:
+  enabled: false
+
+# Metrics come from Prometheus in §12, not StatsD.
+statsd:
+  enabled: false
+
+# Connection pooling matters at a concurrency this pipeline never reaches.
+pgbouncer:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Metadata database
+#
+# The chart's bundled PostgreSQL subchart is disabled because it is broken:
+# it pulls docker.io/bitnami/postgresql, and Bitnami retired their free Docker
+# Hub images, so chart 1.15.0's pinned tag (16.1.0-debian-11-r15) fails with
+#
+#   failed to resolve reference "docker.io/bitnami/postgresql:16.1.0-debian-11-r15": not found
+#
+# Their `bitnamilegacy` namespace is a frozen archive they reserve the right to
+# delete, so pointing at it would only defer the same failure. charts/postgres/
+# runs the official image instead — which is also what CLAUDE.md specifies.
+#
+# Metadata is regenerable: the DAG is manual-trigger only and keeps no history
+# worth preserving between sessions, so losing it with the cluster is fine.
+# ---------------------------------------------------------------------------
+postgresql:
+  enabled: false
+
+# Connection string lives in a Secret created out-of-band (key: `connection`), so
+# no database password is committed. See charts/README.md.
+data:
+  metadataSecretName: airflow-metadata-db
+
+# ---------------------------------------------------------------------------
+# DAGs and logs
+# ---------------------------------------------------------------------------
+
+# DAGs are baked into the image, so neither gitSync nor a shared volume is
+# needed. The image tag is the unit of deployment.
+dags:
+  gitSync:
+    enabled: false
+  persistence:
+    enabled: false
+
+# Task logs live only in the task pod, which Kubernetes deletes on completion.
+#
+# Known gap, accepted for this step: persisting them needs either a ReadWriteMany
+# volume (Filestore on Autopilot, and not cheap) or GCS remote logging via
+# apache-airflow-providers-google, which is not in the image yet. Until then,
+# task logs are read with `kubectl logs` while the pod is alive, and the Airflow
+# UI will report missing logs for finished tasks. GCS remote logging is the
+# intended fix and belongs with the §12 observability work.
+logs:
+  persistence:
+    enabled: false
+
+# Generated once out-of-band and referenced by name so no secret value is
+# committed. See charts/airflow/README.md.
+webserverSecretKeySecretName: airflow-webserver-secret
