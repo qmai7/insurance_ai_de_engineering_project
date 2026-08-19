@@ -100,7 +100,8 @@ Detail doc: [Spark jobs to handle offline data problems ](docs/spark_optimizatio
 Detail doc: [Flink job to handle streaming data problems ](docs/flink_optimization.md)
 
 ## 4. Data Storage
-ClickHouse - detail doc: [ClickHouse storage-layer optimization ](docs/clickhouse_optimization.md)
+ClickHouse is the project's DB solution best designed for real-time analytics and data warehousing.
+ - detail doc: [ClickHouse storage-layer optimization ](docs/clickhouse_optimization.md)
 
 ## 5. Data Pipeline Orchestration (Airflow)
 

@@ -38,17 +38,13 @@ with DAG(
     tags=["insurance", "batch", "silver", "gold", "sla"],
 ) as dag:
 
+    # Was `test -f` against local paths. Bronze lives in GCS now and each task is
+    # its own pod, so those files are simply not there. The script resolves the
+    # same location the Spark jobs read from, which also means the gate cannot
+    # pass while the jobs read somewhere else.
     validate_bronze_inputs = BashOperator(
         task_id="validate_bronze_inputs_exist",
-        bash_command="""
-        set -e
-        test -f /opt/airflow/generated_insurance_data/offline/policyholders/part_old.parquet
-        test -f /opt/airflow/generated_insurance_data/offline/policyholders/part_new.parquet
-        test -f /opt/airflow/generated_insurance_data/offline/policies.parquet
-        test -f /opt/airflow/generated_insurance_data/offline/claims.parquet
-        test -f /opt/airflow/generated_insurance_data/offline/payments.parquet
-        echo 'Bronze/source files exist. Continuing pipeline.'
-        """,
+        bash_command="cd /opt/airflow && python jobs/validate_bronze.py",
     )
 
     silver_delta = BashOperator(

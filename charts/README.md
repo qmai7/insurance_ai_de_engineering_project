@@ -107,3 +107,24 @@ Persisting them needs either a ReadWriteMany volume (Filestore on Autopilot, not
 cheap) or GCS remote logging via `apache-airflow-providers-google`, which is not
 in the image yet. GCS remote logging is the intended fix and belongs with the §12
 observability work.
+
+## Troubleshooting
+
+**`kubectl` times out with `dial tcp <ip>:443: i/o timeout`.** GKE can rotate the
+control-plane endpoint during automatic maintenance, which leaves the cached
+kubeconfig pointing at the old address. The cluster is fine; re-fetch credentials:
+
+```bash
+gcloud container clusters get-credentials insurance-gke \
+  --region northamerica-northeast1 --project aide-playground
+```
+
+Confirm the endpoint really moved with
+`gcloud container clusters list --format="value(name,status,endpoint)"` before
+assuming anything is broken.
+
+**`publish_datahub_lineage_stub` fails with `Failed to resolve 'datahub-gms'`.**
+Expected until Step 4 — DataHub is not deployed yet. Two things need doing when it
+is: deploy `datahub-gms`, and point `SILVER_QUALITY_REPORT_PATH` at the GCS report
+(`gs://<bucket>/reports/silver_quality_report.json`), since it still defaults to a
+local path that no longer exists in a task pod.
