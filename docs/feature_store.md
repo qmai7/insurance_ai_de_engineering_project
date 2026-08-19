@@ -128,6 +128,40 @@ kubectl run feast-verify -n data-ns --rm -it --restart=Never \
   --command -- sh -c "cd /feature_store && python verify_online.py"
 ```
 
+## Two traps worth knowing
+
+Both of these produce an online store that is empty or stale while every command
+reports success. They are the reason the verification step compares values rather
+than just checking for nulls.
+
+### `as_of_date` must come from the data, not a literal
+
+`feat_customer_90d.as_of_date` becomes Feast's `event_timestamp`, so it decides
+whether a row falls inside the view's TTL. It was originally the literal
+`2025-11-01` in `gold_clickhouse.py`. Once wall-clock passed the 120-day TTL,
+`materialize-incremental` loaded **zero** customer rows and reported success —
+Redis held only the 2,700 claim keys and looked healthy.
+
+It is now derived from `max(claim_date)`. That is deliberately not
+`current_date()`: the aggregates describe activity up to the newest claim, and
+stamping them "now" would overstate their freshness.
+
+The generator had the same problem from the other end, with all dates hardcoded to
+2025. Both are fixed; either alone would have kept the bug alive.
+
+### Flushing Redis does not reset the materialization watermark
+
+The registry records how far materialization has progressed. Clearing Redis
+without clearing that watermark leaves Feast convinced the online store is current,
+so `materialize-incremental` loads nothing and exits 0 — with an empty store.
+
+If you flush Redis, reset the watermark too:
+
+```bash
+gcloud storage rm gs://aide-playground-lakehouse/feast/registry.db
+# the DAG's feast_apply step recreates it; incremental then starts from end - TTL
+```
+
 ## Redis configuration notes
 
 Redis runs in `api-serving-ns`, not `data-ns`, because `fraud-prediction-api`

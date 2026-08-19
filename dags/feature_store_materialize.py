@@ -23,7 +23,7 @@ from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperato
 from kubernetes.client import models as k8s
 
 FEAST_IMAGE = (
-    "northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.0"
+    "northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.2"
 )
 NAMESPACE = "data-ns"
 

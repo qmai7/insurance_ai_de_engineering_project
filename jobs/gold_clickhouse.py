@@ -468,8 +468,22 @@ def main() -> None:
         )
     )
 
-    # Offline feature table. Later, this can become a Feast offline store source.
-    as_of = F.to_date(F.lit("2025-11-01"))
+    # Offline feature table, and the source Feast reads for the customer_90d view.
+    #
+    # as_of_date becomes Feast's event_timestamp, so it decides whether these rows
+    # fall inside the view's TTL. It used to be the literal "2025-11-01", which is
+    # a silent trap: no matter how fresh Bronze is, every feature row claims to be
+    # from that date, and once it aged past the 120-day TTL
+    # `materialize-incremental` loaded zero customers while reporting success.
+    #
+    # Derived from the data instead. Using the newest claim date rather than
+    # current_date() is the honest choice — the aggregates describe activity up to
+    # that point, and claiming they are current would misstate their freshness.
+    # Falls back to the run timestamp only when there are no claims at all.
+    as_of_row = claims.agg(F.max("claim_date").alias("max_claim_date")).collect()[0]
+    as_of_value = as_of_row["max_claim_date"] or run_ts.date()
+    print(f"feat_customer_90d as_of_date={as_of_value}")
+    as_of = F.to_date(F.lit(str(as_of_value)))
 
     # High-cardinality optimization:
     # Bucket fact tables by customer_key before customer-level feature aggregation.

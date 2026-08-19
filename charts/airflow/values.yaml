@@ -23,13 +23,13 @@ executor: "KubernetesExecutor"
 images:
   airflow:
     repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark
-    tag: "0.1.3"
+    tag: "0.1.9"
     # Tags are immutable per build, so there is no reason to re-pull on restart.
     pullPolicy: IfNotPresent
   # Same image for executor pods, so DAG code and task code cannot drift.
   pod_template:
     repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark
-    tag: "0.1.3"
+    tag: "0.1.9"
     pullPolicy: IfNotPresent
 
 # Applied to every Airflow container, which matters because scheduler and task
@@ -61,6 +61,11 @@ env:
     value: "8123"
   - name: CLICKHOUSE_DATABASE
     value: "gold_insurance"
+  # Four gunicorn workers is the default and is sized for real traffic. This
+  # webserver serves one operator, so two start faster and halve the memory —
+  # which is the same pressure that made the startup probe overrun.
+  - name: AIRFLOW__WEBSERVER__WORKERS
+    value: "2"
 
 # ---------------------------------------------------------------------------
 # Identity
@@ -82,10 +87,24 @@ webserver:
   resources:
     requests:
       cpu: 300m
-      memory: 1Gi
+      memory: 2Gi
     limits:
       cpu: 800m
-      memory: 1Gi
+      memory: 2Gi
+
+  # The chart's default startup probe allows 60s (failureThreshold 6 x 10s), and
+  # the webserver does not reliably serve /health that fast on a cold Autopilot
+  # node — it creates webserver_config.py, imports every provider, then boots
+  # gunicorn workers. When it overruns, kubelet SIGTERMs it and it crashloops
+  # forever with exit code 0, which reads like an application crash rather than a
+  # probe timeout and also fails the whole `helm upgrade`.
+  #
+  # 30 x 10s = 5 minutes. Liveness still catches a genuinely wedged webserver
+  # afterwards; this only widens the cold-start window.
+  startupProbe:
+    timeoutSeconds: 20
+    periodSeconds: 10
+    failureThreshold: 30
   # Coursework credentials, matching Part 1's admin/admin. Not a real secret:
   # the webserver is not internet-exposed at this step, and §10's gateway adds
   # basic auth plus HTTPS later.

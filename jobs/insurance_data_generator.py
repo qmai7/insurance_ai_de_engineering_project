@@ -185,9 +185,29 @@ def window(config: GeneratorConfig) -> Dict[str, pd.Timestamp]:
     return _WINDOW
 
 
+# Spark 3.5.1 cannot read nanosecond Parquet timestamps:
+#
+#   AnalysisException: Illegal Parquet type: INT64 (TIMESTAMP(NANOS,false))
+#
+# pandas holds datetime64[ns] internally and recent pyarrow writes it faithfully
+# as TIMESTAMP(NANOS), so every timestamp column becomes unreadable by the Silver
+# job. Coercing to microseconds on write is the fix; nothing is lost because this
+# data has second-level resolution at best. allow_truncated_timestamps silences
+# the warning that coercion *could* discard precision.
+#
+# This is toolchain drift, not a logic change — the original Bronze files were
+# written by an older pandas/pyarrow that defaulted to microseconds.
+PARQUET_TIMESTAMP_OPTS = {"coerce_timestamps": "us", "allow_truncated_timestamps": True}
+
+
+def write_parquet(df: pd.DataFrame, path: Path) -> None:
+    """Write Parquet in a form Spark 3.5.1 can actually read."""
+    df.to_parquet(path, index=False, **PARQUET_TIMESTAMP_OPTS)
+
+
 def write_dataframe(df: pd.DataFrame, path_without_ext: Path) -> None:
     # Strict Parquet only. Install pyarrow with: uv add pyarrow
-    df.to_parquet(path_without_ext.with_suffix(".parquet"), index=False)
+    write_parquet(df, path_without_ext.with_suffix(".parquet"))
 
 
 def write_jsonl(records: List[dict], path: Path) -> None:
@@ -628,8 +648,8 @@ def main(config: GeneratorConfig = CONFIG) -> None:
         policyholders["signup_ts"] >= window(config)["schema_change"]
     ]
 
-    old_ph.to_parquet(policyholders_dir / "part_old.parquet", index=False)
-    new_ph.to_parquet(policyholders_dir / "part_new.parquet", index=False)
+    write_parquet(old_ph, policyholders_dir / "part_old.parquet")
+    write_parquet(new_ph, policyholders_dir / "part_new.parquet")
 
     # Write the other tables as single Parquet files.
     write_dataframe(policies, offline_dir / "policies")
