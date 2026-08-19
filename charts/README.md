@@ -128,3 +128,27 @@ Expected until Step 4 — DataHub is not deployed yet. Two things need doing whe
 is: deploy `datahub-gms`, and point `SILVER_QUALITY_REPORT_PATH` at the GCS report
 (`gs://<bucket>/reports/silver_quality_report.json`), since it still defaults to a
 local path that no longer exists in a task pod.
+
+## Parking the platform between sessions
+
+GKE has no stop/start — a cluster bills for as long as it exists. But Autopilot
+charges for *pod resource requests*, so scaling every workload to zero removes the
+compute cost and lets Autopilot drain the nodes.
+
+```bash
+./charts/scale.sh down     # end of session
+./charts/scale.sh up       # next session
+./charts/scale.sh status
+```
+
+What still bills while parked: the cluster management fee (normally offset by
+GKE's free-tier credit) and the PersistentVolumes — a few cents a day for 20 GiB.
+
+Parking is worth it because the PVCs keep ClickHouse's Gold tables, Airflow's
+metadata and DAG history, and Redis's materialized features, so resuming is a
+scale-up rather than a ~35-minute rebuild (apply, secrets, three helm installs,
+Bronze upload, batch DAG, materialize).
+
+Prefer `terraform destroy` when stopping for more than a few days — it ends the
+cluster fee and disk charges too. Remote state survives in the bootstrap bucket, so
+coming back is `terraform apply` plus `bootstrap-secrets.sh`.
