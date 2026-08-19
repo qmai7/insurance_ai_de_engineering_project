@@ -1,0 +1,31 @@
+project: insurance_fraud
+
+# `local` rather than `gcp`. The gcp provider defaults to BigQuery offline and
+# Datastore online; both stores are set explicitly below, so the provider would
+# only add unused GCP assumptions.
+provider: local
+
+# The registry is the shared source of truth for what features exist. It lives in
+# GCS, not the image, because the materialize job, the training pipeline, and the
+# prediction API all read it and must agree. Baking it into an image would let
+# them drift.
+registry:
+  registry_type: file
+  path: gs://aide-playground-lakehouse/feast/registry.db
+
+# Redis lives in api-serving-ns while this job runs from data-ns, so the
+# cross-namespace FQDN is required — a bare `redis:6379` resolves only within the
+# pod's own namespace.
+online_store:
+  type: redis
+  connection_string: redis.api-serving-ns.svc.cluster.local:6379
+
+# Parquet on GCS, written by jobs/export_gold_to_feast.py. CLAUDE.md chooses this
+# over the community ClickHouse offline store, which is unstable.
+offline_store:
+  type: file
+
+# Version 3 is current for Feast 0.65. The serialization version determines the
+# byte layout of online keys, so changing it later invalidates everything already
+# materialized into Redis.
+entity_key_serialization_version: 3

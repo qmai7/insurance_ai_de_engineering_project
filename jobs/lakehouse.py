@@ -40,6 +40,8 @@ if LAKEHOUSE_ROOT:
         "silver_staging": f"{LAKEHOUSE_ROOT}/silver/staging",
         "silver_trusted": f"{LAKEHOUSE_ROOT}/silver/trusted",
         "reports": f"{LAKEHOUSE_ROOT}/reports",
+        "feast": f"{LAKEHOUSE_ROOT}/feast",
+        "delta": f"{LAKEHOUSE_ROOT}/delta/gold",
     }
 else:
     _defaults = {
@@ -47,12 +49,28 @@ else:
         "silver_staging": str(BASE_DIR / "silver_delta_staging"),
         "silver_trusted": str(BASE_DIR / "silver_delta"),
         "reports": str(BASE_DIR / "reports"),
+        "feast": str(BASE_DIR / "feast_offline"),
+        "delta": str(BASE_DIR / "delta_gold"),
     }
 
 BRONZE_ROOT = (os.getenv("BRONZE_ROOT") or _defaults["bronze"]).rstrip("/")
 SILVER_STAGING_ROOT = (os.getenv("SILVER_STAGING_ROOT") or _defaults["silver_staging"]).rstrip("/")
 SILVER_TRUSTED_ROOT = (os.getenv("SILVER_TRUSTED_ROOT") or _defaults["silver_trusted"]).rstrip("/")
 REPORTS_ROOT = (os.getenv("REPORTS_ROOT") or _defaults["reports"]).rstrip("/")
+
+# Two separate destinations for the same Gold data, serving different readers.
+#
+# FEAST_ROOT holds plain Parquet, because that is what Feast's FileSource reads;
+# CLAUDE.md picks it over the community ClickHouse-Feast connector, which is
+# unstable.
+#
+# DELTA_ROOT holds the same data as Delta tables, used only by the training
+# pipeline. Delta's transaction log versions every write for free, so a training
+# run can pin `versionAsOf` and log that number to MLflow (§7). Keeping it
+# parallel to the Feast export rather than replacing it means there is no
+# Feast/Delta compatibility question to answer.
+FEAST_ROOT = (os.getenv("FEAST_ROOT") or _defaults["feast"]).rstrip("/")
+DELTA_ROOT = (os.getenv("DELTA_ROOT") or _defaults["delta"]).rstrip("/")
 
 SILVER_TABLES = ["policyholders", "policies", "claims", "payments"]
 
@@ -117,6 +135,16 @@ def report_path(filename: str = "") -> str:
     return join(REPORTS_ROOT, filename)
 
 
+def feast_path(table: str = "") -> str:
+    """Parquet source Feast reads for offline (historical) retrieval."""
+    return join(FEAST_ROOT, table)
+
+
+def delta_path(table: str = "") -> str:
+    """Versioned Delta snapshot the training pipeline pins with versionAsOf."""
+    return join(DELTA_ROOT, table)
+
+
 def create_spark_session(app_name: str, extra_conf: dict | None = None) -> SparkSession:
     """
     Build the Spark session every batch job shares.
@@ -151,7 +179,14 @@ def create_spark_session(app_name: str, extra_conf: dict | None = None) -> Spark
 
     remote = any(
         is_remote(p)
-        for p in (BRONZE_ROOT, SILVER_STAGING_ROOT, SILVER_TRUSTED_ROOT, REPORTS_ROOT)
+        for p in (
+            BRONZE_ROOT,
+            SILVER_STAGING_ROOT,
+            SILVER_TRUSTED_ROOT,
+            REPORTS_ROOT,
+            FEAST_ROOT,
+            DELTA_ROOT,
+        )
     )
     extra_packages: list[str] = []
 
@@ -269,5 +304,7 @@ def describe_locations() -> str:
         f"bronze={BRONZE_ROOT} "
         f"silver_staging={SILVER_STAGING_ROOT} "
         f"silver_trusted={SILVER_TRUSTED_ROOT} "
-        f"reports={REPORTS_ROOT}"
+        f"reports={REPORTS_ROOT} "
+        f"feast={FEAST_ROOT} "
+        f"delta={DELTA_ROOT}"
     )
