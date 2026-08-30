@@ -55,7 +55,7 @@ prediction and drift APIs, KServe, gateway, observability, A/B).
 
 ---
 ## 0. Project architecture
-![Project architecture](assets/Project_architecture.png)
+![Project architecture](assets/Project_architecture.svg)
 ## 1. Goal setup
 
 **Objective.** Build a business-ready Gold zone for insurance analytics, BI, and ML
