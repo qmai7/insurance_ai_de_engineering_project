@@ -8,7 +8,7 @@
 # The point is that no JSON key is ever created, downloaded, mounted, or
 # committed — which is also what keeps the Security rubric item honest, since a
 # static key in a Kubernetes Secret is exactly the anti-pattern it asks about.
-##
+##(see CLAUDE.md §7)
 
 resource "google_service_account" "data_platform" {
   account_id   = "${var.name_prefix}-data-platform"

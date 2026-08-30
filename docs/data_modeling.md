@@ -50,13 +50,22 @@ Two feature tables are implemented in `gold_insurance` (a future `feat_customer_
 join of the two is documented as next work, not built).
 
 **Offline — `feat_customer_90d`** (`jobs/gold_clickhouse.py`)
-- Grain: one per `customer_id` at `as_of_date` (2025-11-01).
+- Grain: one row per (`customer_id`, `as_of_date`) — a time series, not a snapshot.
 - Features: `f_customer_avg_claim_amount_90d`, `f_customer_total_claims_90d`,
   `f_customer_total_claim_amount_90d`, `f_customer_total_payments_90d`,
   `f_customer_payment_failure_rate_90d`.
+- `as_of_date` values come from two places: every date a customer filed a claim
+  (the training spine), plus the newest claim date in the dataset for *every*
+  customer (the row that materializes into Redis for serving).
 - **Point-in-time correctness:** only claims/payments in
   `[as_of_date - 90d, as_of_date)` are aggregated — no data later than the
-  reference timestamp leaks in.
+  reference timestamp leaks in, and the strict upper bound also means the history
+  behind a claim never includes that claim.
+- The grain matters more than it looks. It was originally a single snapshot for
+  all customers, which reads as correct and is unusable: Feast's point-in-time
+  join takes the newest feature row at or before the entity timestamp, so a
+  training pull keyed on `claim_date` matched only claims filed on the snapshot
+  date and returned nulls for every older one.
 
 **Streaming — `feat_stream_30m`** (Flink + `jobs/stream_features_to_clickhouse.py`)
 - Grain: one per `customer_id` per sliding window (`window_start`, `window_end`).
@@ -70,7 +79,7 @@ join of the two is documented as next work, not built).
 
 | OBT | Grain | Purpose | Core columns |
 |---|---|---|---|
-| `obt_claims_enriched` | one per claim (transaction grain) | denormalized table for claim/loss BI & dashboards — no joins needed | claim_id, claim_date, claim_type, claim_status, claim_amount, policy_id, policy_type, policy_status, premium_amount, policy_start/end_date, claim_to_premium_ratio, customer_id, province, city, risk_segment, age, marketing_opt_in, claim_year, claim_month, claim_day_of_week, claim_is_weekend |
+| `obt_claims_enriched` | one per claim (transaction grain) | denormalized table for claim/loss BI & dashboards — no joins needed | claim_id, claim_date, claim_type, claim_status, claim_amount, policy_id, policy_type, policy_status, premium_amount, policy_start/end_date, claim_to_premium_ratio, days_since_policy_start, customer_id, province, city, risk_segment, age, marketing_opt_in, claim_year, claim_month, claim_day_of_week, claim_is_weekend |
 
 Transaction-grain so BI questions (loss by policy_type/geography/time, loss ratio,
 claim-status mix) resolve from one wide table. Joins claim → policy → customer →

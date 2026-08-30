@@ -1,13 +1,10 @@
-##
 # Feast image — deliberately separate from the Airflow/Spark image.
 #
 # Installing feast[redis,gcp] alongside Airflow resolves to numpy 2.2 and pandas
 # 2.3, and PySpark 3.5.1 does not work with numpy 2.x. Sharing one image would
 # mean the feature-store install silently breaking every Spark job's pandas
 # conversion, so the dependency sets are kept apart.
-#
-# It also matches CLAUDE.md §8, which wants a separate CI/CD pipeline per job.
-##
+
 
 FROM python:3.11-slim
 
@@ -30,3 +27,9 @@ COPY feature_store/ /feature_store/
 # No ENTRYPOINT: this image is driven by explicit commands
 # (`feast apply`, `feast materialize-incremental <end>`) from Airflow.
 CMD ["feast", "version"]
+
+# If manually build & push this image 
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.2 \
+#  -f dockerfile.feast .
+
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.2

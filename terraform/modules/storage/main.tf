@@ -26,7 +26,7 @@ resource "google_storage_bucket" "lakehouse" {
   force_destroy = true
 
   # Object versioning stays OFF on purpose. Delta Lake's transaction log already
-  # provides the data versioning the project needs (see CLAUDE.md §7), so GCS
+  # provides the data versioning the project needs, so GCS
   # versioning would store redundant copies of large Parquet files and bill for
   # every one.
   versioning {

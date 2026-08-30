@@ -12,4 +12,11 @@ enable_private_nodes = false
 workload_identity_bindings = [
   "data-ns/airflow",
   "data-ns/spark",
+  # MLflow's artifact store is the same lakehouse bucket, so the tracking server
+  # and the training jobs both need the bucket-scoped GSA. Separate KSAs rather
+  # than one shared identity: the server and a training run are different
+  # workloads, and per-workload KSAs are what makes a future least-privilege
+  # split a config change instead of a redeployment.
+  "ml-ns/mlflow",
+  "ml-ns/training",
 ]

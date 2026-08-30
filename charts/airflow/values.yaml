@@ -23,37 +23,30 @@ executor: "KubernetesExecutor"
 images:
   airflow:
     repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark
-    tag: "0.1.9"
-    # Tags are immutable per build, so there is no reason to re-pull on restart.
+    tag: "0.1.12"
+    # don't re-download if the node already has this exact tag cached
     pullPolicy: IfNotPresent
   # Same image for executor pods, so DAG code and task code cannot drift.
   pod_template:
     repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark
-    tag: "0.1.9"
+    tag: "0.1.12"
     pullPolicy: IfNotPresent
 
 # Applied to every Airflow container, which matters because scheduler and task
 # pods both need them — the task pods are where the Spark jobs actually run.
+# GCS storage bucket
 env:
   - name: LAKEHOUSE_ROOT
     value: "gs://aide-playground-lakehouse"
   - name: GCP_PROJECT
     value: "aide-playground"
-  # Spark's managed-table warehouse and the Derby metastore. /tmp is the only
-  # reliably writable path in the task pod; this state is scratch consumed within
-  # a single job, so losing it with the pod is correct.
+  
+  # 
   - name: SPARK_SCRATCH_DIR
     value: "/tmp"
   - name: CLICKHOUSE_HOST
     value: "clickhouse"
-  # Must be set explicitly, and not because the default is wrong.
-  #
-  # Kubernetes injects service-link variables for every Service in the namespace,
-  # so the Service named `clickhouse` produces CLICKHOUSE_PORT=tcp://10.x.x.x:8123
-  # — which collides with this exact variable and makes int() blow up:
-  #
-  #   ValueError: invalid literal for int() with base 10: 'tcp://10.30.3.250:8123'
-  #
+
   # An explicit entry here wins over the injected one. A hazard with no
   # docker-compose equivalent, and one that will recur for any future Service
   # whose name matches a config prefix (kafka, redis).
@@ -92,15 +85,7 @@ webserver:
       cpu: 800m
       memory: 2Gi
 
-  # The chart's default startup probe allows 60s (failureThreshold 6 x 10s), and
-  # the webserver does not reliably serve /health that fast on a cold Autopilot
-  # node — it creates webserver_config.py, imports every provider, then boots
-  # gunicorn workers. When it overruns, kubelet SIGTERMs it and it crashloops
-  # forever with exit code 0, which reads like an application crash rather than a
-  # probe timeout and also fails the whole `helm upgrade`.
-  #
-  # 30 x 10s = 5 minutes. Liveness still catches a genuinely wedged webserver
-  # afterwards; this only widens the cold-start window.
+  
   startupProbe:
     timeoutSeconds: 20
     periodSeconds: 10
@@ -130,10 +115,7 @@ scheduler:
       cpu: 800m
       memory: 1Gi
 
-# Sizing for the executor task pods, which is where Spark actually runs. Spark in
-# local[*] mode needs real headroom for the driver JVM — the default request
-# would get the JVM OOM-killed, surfacing as an opaque task failure rather than
-# an obvious memory error.
+# Sizing for the executor task pods, which is where Spark actually runs. 
 workers:
   serviceAccount:
     create: false
@@ -198,7 +180,7 @@ pgbouncer:
 # it pulls docker.io/bitnami/postgresql, and Bitnami retired their free Docker
 # Hub images, so chart 1.15.0's pinned tag (16.1.0-debian-11-r15) fails with
 #
-#   failed to resolve reference "docker.io/bitnami/postgresql:16.1.0-debian-11-r15": not found
+# failed to resolve reference "docker.io/bitnami/postgresql:16.1.0-debian-11-r15": not found
 #
 # Their `bitnamilegacy` namespace is a frozen archive they reserve the right to
 # delete, so pointing at it would only defer the same failure. charts/postgres/

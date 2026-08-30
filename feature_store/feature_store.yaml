@@ -1,3 +1,5 @@
+# Feast repo config
+
 project: insurance_fraud
 
 # `local` rather than `gcp`. The gcp provider defaults to BigQuery offline and
@@ -20,8 +22,7 @@ online_store:
   type: redis
   connection_string: redis.api-serving-ns.svc.cluster.local:6379
 
-# Parquet on GCS, written by jobs/export_gold_to_feast.py. CLAUDE.md chooses this
-# over the community ClickHouse offline store, which is unstable.
+# Parquet on GCS, written by jobs/export_gold_to_feast.py.
 offline_store:
   type: file
 

@@ -2,8 +2,7 @@
 Insurance Data + AI Project - Part 01 Data Generator (Small/Fast Version)
 
 Run:
-  uv add pandas numpy pyarrow
-  uv run python insurance_data_generator_small_fixed.py
+  uv run python insurance_data_generator.py
 
 Outputs strict Parquet for offline data and JSONL for streaming-style events.
 """
@@ -45,40 +44,36 @@ class GeneratorConfig:
     # aged past `customer_90d`'s 120-day TTL, `materialize-incremental` loaded
     # zero customer rows and the online store looked simply empty. Anchoring the
     # window to "now" keeps generated data inside the TTLs by construction.
-    #
-    # Leave empty for today (UTC). Set it explicitly to pin a window for grading
-    # or to reproduce a specific run — with the seed fixed, an explicit end_date
-    # makes the whole dataset byte-reproducible.
+    
     end_date: str = ""
 
     # Schema evolution: rows older than this offset have selected columns null.
-    # Relative to end_date, so it moves with the window instead of going stale.
+    # any row whose date falls more than 30 days before end_date, gets risk_segment and payment_method set to null
     schema_change_offset_days: int = 30
 
-    # Fraud labels (claim_id, is_fraud).
-    #
-    # Labels are generated from claim attributes rather than at random, so the
-    # signal is genuinely learnable — a coin-flip label would make every model
-    # score ~0.5 AUC and make the whole ML section meaningless.
+    # Fraud labels config (claim_id, is_fraud).
+    
     fraud_base_rate: float = 0.06
     fraud_high_ratio_weight: float = 1.30
     fraud_new_policy_weight: float = 0.90
     fraud_high_risk_weight: float = 0.70
     fraud_weekend_weight: float = 0.25
+
     # Claim types with a higher underlying fraud propensity.
     fraud_prone_claim_types: Tuple[str, ...] = ("theft", "vandalism", "lost_baggage")
     fraud_type_weight: float = 0.80
 
-    # Data drift simulation (§6).
-    #
-    # Applies to the most recent `drift_window_days` of the window, so the
-    # drift-detection DAG has something real to find: claim amounts inflate,
-    # payments fail more often, and fraud becomes more likely. All three surface
-    # in the Gold feature table, which is what drift monitoring actually reads.
+    # Data drift simulation.
+
+    # Periodic drift detection Airflow DAG pushing metrics via Prometheus Pushgateway
     drift_enabled: bool = True
     drift_window_days: int = 14
-    drift_claim_amount_multiplier: float = 1.60
+    # within that drift window, claim amounts get scaled up ~60% versus the baseline distribution. 
+    # E.g. if a normal claim were around $2,000, in the drift window it's generated closer to $3,200.
+    drift_claim_amount_multiplier: float = 1.60 
+    # the payment failure rate increases by 10 percentage points in that window
     drift_payment_failure_uplift: float = 0.10
+    # the odds of a claim being fraudulent doubles in that window
     drift_fraud_odds_multiplier: float = 2.00
 
     # Streaming controls: normal traffic, burst traffic, late arrivals, and duplicates.

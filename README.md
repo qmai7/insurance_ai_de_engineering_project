@@ -11,6 +11,30 @@ pipeline plan, and warehouse optimization. It describes **what is actually built
 in this repo**, and is explicit about coursework simplifications.
 
 ---
+## Part 2 — the same platform on GCP/GKE
+
+Part 2 re-platforms everything below onto GKE Autopilot with GCS as the lakehouse,
+and adds the ML side. The build order and design decisions live in
+[`CLAUDE.md`](CLAUDE.md); these are the documents for what is deployed and working:
+
+| Doc | Covers | Status |
+|---|---|---|
+| [`terraform/README.md`](terraform/README.md) | GKE Autopilot, GCS, IAM/Workload Identity, Artifact Registry | done |
+| [`charts/README.md`](charts/README.md) | Airflow, Postgres, ClickHouse, Redis on GKE; parking the platform between sessions | done |
+| [`docs/feature_store.md`](docs/feature_store.md) | Feast on GCS Parquet + Redis; the Materialize Pipeline | done (Jobs 1 & 2 wait on Kafka/Flink) |
+| [`docs/ml.md`](docs/ml.md) | the fraud model end to end — Feast retrieval, temporal split, results, MLflow registry, training pipeline | done (see gaps below) |
+| [`notebooks/README.md`](notebooks/README.md) | the notebook's separate virtualenv, and why it has to be separate | done |
+
+MLflow is deployed in `ml-ns` with a Postgres backend and GCS artifacts, and
+`fraud-detector` is registered and promoted. The Kubeflow pipeline
+([`ml/pipeline.py`](ml/pipeline.py)) compiles and both of its steps are verified as
+Jobs, but the KFP control plane is not deployed and there is no distributed
+training step — both gaps are stated in [`docs/ml.md`](docs/ml.md#what-is-verified-and-what-is-not).
+
+Not yet migrated: Kafka/Flink streaming, DataHub, and the serving layer (the
+prediction and drift APIs, KServe, gateway, observability, A/B).
+
+---
 ## Table of contents
 
 - [0. Project architecture](#0-project-architecture)

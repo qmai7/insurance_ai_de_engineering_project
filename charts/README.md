@@ -11,6 +11,7 @@ here. Each Compose service becomes a Deployment, StatefulSet, or Job.
 | `airflow-webserver` | `airflow/` — Deployment | 2 |
 | `airflow-scheduler` | `airflow/` — Deployment, KubernetesExecutor | 2 |
 | `clickhouse` | `clickhouse/` — StatefulSet + PVC | 2 |
+| — (new in Part 2) | `mlflow/` — Deployment + Service in `ml-ns` | 6 |
 | `kafka` | not yet | 3 |
 | `flink-jobmanager`, `flink-taskmanager` | not yet | 3 |
 | `opensearch`, `datahub-*` | not yet | 4 |
@@ -35,7 +36,15 @@ helm upgrade --install clickhouse charts/clickhouse -n data-ns --wait
 helm repo add apache-airflow https://airflow.apache.org
 helm upgrade --install airflow apache-airflow/airflow \
   --version 1.15.0 -n data-ns -f charts/airflow/values.yaml --wait --timeout 15m
+
+# 4. MLflow — tracking server + model registry (step 6)
+helm upgrade --install mlflow charts/mlflow -n ml-ns --wait
 ```
+
+`bootstrap-secrets.sh` also creates `ml-ns`, the `mlflow` and `training`
+ServiceAccounts (annotated for Workload Identity from `terraform output`), and the
+`mlflow-db` Secret. MLflow's backend store is a separate `mlflow` database on the
+same Postgres, created by an init container on first start.
 
 ### Secrets
 
@@ -55,7 +64,23 @@ pointing at the cause.
 ```bash
 kubectl port-forward -n data-ns svc/airflow-webserver 8080:8080   # admin/admin
 kubectl port-forward -n data-ns svc/clickhouse 8123:8123
+kubectl port-forward -n ml-ns svc/mlflow 5000:5000                # MLflow UI
 ```
+
+MLflow 3 validates the Host header against an allow-list (DNS-rebinding
+protection). `localhost` is included, so port-forwarding works; in-cluster DNS
+names had to be added explicitly — see `charts/mlflow/values.yaml`.
+
+## Training a model
+
+```bash
+kubectl delete job fraud-training -n ml-ns --ignore-not-found
+kubectl apply -f ml/training-job.yaml
+kubectl logs -n ml-ns -l job-name=fraud-training -f
+```
+
+The run registers a new `fraud-detector` version and tags it with the Delta
+`data_version` it read. It never promotes — see [`docs/ml.md`](../docs/ml.md).
 
 ## Why these choices
 

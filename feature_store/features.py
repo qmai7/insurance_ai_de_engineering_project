@@ -10,8 +10,7 @@ A prediction joins both: claim attributes describe the event, customer aggregate
 describe the history it sits in.
 
 Sources are the Parquet exports written by jobs/export_gold_to_feast.py, not
-ClickHouse directly, because Feast's community ClickHouse offline store is
-unstable (CLAUDE.md).
+ClickHouse directly.
 """
 
 from datetime import timedelta
@@ -23,6 +22,8 @@ LAKEHOUSE = "gs://aide-playground-lakehouse"
 
 # ---------------------------------------------------------------------------
 # Entities
+# An Entity in Feast is essentially a declaration of a join key — it tells Feast "features attached to this entity are looked up by this column." 
+# join_keys=["claim_id"] means: whenever someone requests claim-grain features, they'll pass a claim_id, and Feast uses that to find the matching row.
 # ---------------------------------------------------------------------------
 
 claim = Entity(
@@ -38,20 +39,11 @@ customer = Entity(
 )
 
 # ---------------------------------------------------------------------------
-# Sources
+# Sources are where the actual data lives
 #
-# created_timestamp_column matters for correctness, not bookkeeping: when two rows
-# share an event_timestamp, Feast uses it to decide which one wins. Without it,
+# when two rows share an event_timestamp, Feast uses created_timestamp_column to decide which one wins. Without it,
 # ties resolve arbitrarily.
 # ---------------------------------------------------------------------------
-
-customer_90d_source = FileSource(
-    name="feat_customer_90d_source",
-    path=f"{LAKEHOUSE}/feast/feat_customer_90d",
-    timestamp_field="event_timestamp",
-    created_timestamp_column="created_timestamp",
-    description="Trailing-90-day customer aggregates exported from Gold.",
-)
 
 claim_source = FileSource(
     name="obt_claims_enriched_source",
@@ -61,8 +53,16 @@ claim_source = FileSource(
     description="Claim-level attributes joined to policy and customer context.",
 )
 
+customer_90d_source = FileSource(
+    name="feat_customer_90d_source",
+    path=f"{LAKEHOUSE}/feast/feat_customer_90d",
+    timestamp_field="event_timestamp",
+    created_timestamp_column="created_timestamp",
+    description="Trailing-90-day customer aggregates exported from Gold.",
+)
+
 # ---------------------------------------------------------------------------
-# Feature views
+# Feature views ties everything together: the entity, the source, and the schema of features to expose.
 # ---------------------------------------------------------------------------
 
 customer_90d_fv = FeatureView(
@@ -76,11 +76,16 @@ customer_90d_fv = FeatureView(
     # freshness instead of causing outright lookup misses online and silently
     # dropping rows from training joins.
     #
+    # The source is a time series at (customer_id, as_of_date), not one snapshot per
+    # customer, which is what makes the TTL do useful work offline: a claim from two
+    # months ago joins to the row stamped with its own filing date, and the TTL only
+    # rejects a claim whose nearest feature row is more than 120 days stale.
+    #
     # A streaming view such as feat_stream_30m would take the opposite setting —
     # minutes, not months — because a stale near-real-time feature is worse than
     # no feature. That view arrives with the Kafka/Flink work.
     ttl=timedelta(days=120),
-    online=True,
+    online=True, # weether it should be pushed to the online store (Redis).
     source=customer_90d_source,
     schema=[
         Field(name="f_customer_avg_claim_amount_90d", dtype=Float64),
@@ -109,6 +114,7 @@ claim_features_fv = FeatureView(
         Field(name="claim_amount", dtype=Float64),
         Field(name="premium_amount", dtype=Float64),
         Field(name="claim_to_premium_ratio", dtype=Float64),
+        Field(name="days_since_policy_start", dtype=Float64),
         Field(name="claim_type", dtype=String),
         Field(name="policy_type", dtype=String),
         Field(name="policy_status", dtype=String),
@@ -119,7 +125,7 @@ claim_features_fv = FeatureView(
         Field(name="claim_month", dtype=Int64),
         Field(name="claim_day_of_week", dtype=Int64),
         Field(name="claim_is_weekend", dtype=Bool),
-        # claim_status is deliberately excluded.
+        # claim_status (denied, approved, pending),unlike is_fraud label, is deliberately excluded.
         #
         # It records the outcome of claim processing, which is decided after any
         # fraud assessment. Feeding it to the model would be target leakage: it

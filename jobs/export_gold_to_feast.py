@@ -8,13 +8,14 @@ Writes each table twice, to two formats, for two different readers:
   delta/gold/<t>/  the same rows as a Delta table, read only by the training
                    pipeline. Delta versions every write in its transaction log,
                    so a training run can pin `versionAsOf` and record that number
-                   as an MLflow tag (§7). Keeping it parallel to the Parquet
-                   export, rather than replacing it, avoids having to answer
-                   whether Feast reads Delta.
+                   as an MLflow tag.
 
-Why export at all, instead of pointing Feast at ClickHouse: the community
-ClickHouse offline store for Feast is unstable, so CLAUDE.md deliberately routes
-through GCS Parquet instead.
+End-to-end flow: ClickHouse (Gold) 
+→ pandas (via clickhouse-connect) 
+→ type-normalized pandas (to_spark_friendly) 
+→ Spark DataFrame with Feast-required timestamp columns added 
+→ written twice, once as plain Parquet for Feast/materialize, once as Delta for training's versionAsOf pinning 
+→ the new Delta version number surfaced in the logs so the training pipeline knows what to reference.
 
 ClickHouse is read with clickhouse-connect into pandas rather than over Spark
 JDBC. The volumes are small (10k customers, 2.7k claims) and it avoids shipping
@@ -38,8 +39,7 @@ CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "gold_insurance")
 
 # Feast requires an event-timestamp column on every source so it can do
 # point-in-time correct joins — pick the wrong column here and training silently
-# leaks future information. Each export names the Gold column that carries the
-# feature's real as-of time.
+# leaks future information.
 EXPORTS = [
     {
         "table": "feat_customer_90d",
@@ -69,20 +69,7 @@ def clickhouse_client():
 
 def to_spark_friendly(pdf: pd.DataFrame) -> pd.DataFrame:
     """
-    Convert pandas extension dtypes to the plain ones Spark can infer.
-
-    clickhouse-connect returns modern pandas dtypes — `string[python]` holding
-    pd.NA, unsigned `uint8`/`uint16`, and second-precision `datetime64[s]`.
-    PySpark 3.5.1 does not enable Arrow for pandas conversion by default, so it
-    falls back to sampling rows and inferring types, and those dtypes make it
-    guess wrong:
-
-        PySparkTypeError: [CANNOT_MERGE_TYPE] Can not merge type
-        `StringType` and `StructType`
-
-    Normalising up front is preferable to enabling Arrow, because it keeps the
-    conversion explicit and does not make correctness depend on a pyarrow version
-    matching Spark's expectations.
+    Convert pandas extension dtypes to the ones Spark can infer.
     """
     out = pdf.copy()
     for col in out.columns:
@@ -93,8 +80,7 @@ def to_spark_friendly(pdf: pd.DataFrame) -> pd.DataFrame:
             out[col] = series.astype(bool)
         elif pd.api.types.is_integer_dtype(series):
             # Spark has no unsigned types. A nullable integer cannot become int64
-            # without inventing a value for the nulls, so it widens to float
-            # instead — losing nothing at these magnitudes.
+            # without inventing a value for the nulls, so it widens to float instead
             out[col] = series.astype("float64") if has_nulls else series.astype("int64")
         elif pd.api.types.is_float_dtype(series):
             out[col] = series.astype("float64")
@@ -104,7 +90,7 @@ def to_spark_friendly(pdf: pd.DataFrame) -> pd.DataFrame:
             out[col] = series.astype("datetime64[ns]")
         else:
             # Strings and anything else: plain object with real None, because
-            # Spark does not understand pd.NA.
+            # Spark does not understand pd.NA
             out[col] = series.astype(object).where(series.notna(), None)
     return out
 
@@ -120,7 +106,9 @@ def export_table(spark, client, spec: dict) -> int:
 
     # Feast wants a real timestamp, not a date. The Gold columns are DATE, which
     # Feast will reject or silently mishandle in a point-in-time join.
-    df = df.withColumn("event_timestamp", F.to_timestamp(F.col(spec["timestamp_from"])))
+    df = df.withColumn("event_timestamp", 
+                       F.to_timestamp(F.col(spec["timestamp_from"])) #E.g: timnestamp_from resolves to "as_of_date" in "feat_customer_90d"
+                    )
 
     # Feast uses created_timestamp to break ties when two rows share an
     # event_timestamp. Every row in a given export is produced by the same run,
@@ -133,6 +121,8 @@ def export_table(spark, client, spec: dict) -> int:
     # Overwrite, not append: Gold itself is rebuilt wholesale by the batch DAG, so
     # appending would stack duplicate snapshots of identical rows and corrupt
     # point-in-time joins.
+
+    # 
     df.write.mode("overwrite").parquet(parquet_target)
 
     (
@@ -164,8 +154,8 @@ def main() -> None:
     for spec in EXPORTS:
         target = lakehouse.delta_path(spec["table"])
         version = (
-            spark.sql(f"DESCRIBE HISTORY delta.`{target}`")
-            .agg(F.max("version"))
+            spark.sql(f"DESCRIBE HISTORY delta.`{target}`") # Reads the Delta transaction log 
+            .agg(F.max("version")) # Finds the highest version number in the transaction log
             .collect()[0][0]
         )
         print(f"  {spec['table']}: latest version={version}")

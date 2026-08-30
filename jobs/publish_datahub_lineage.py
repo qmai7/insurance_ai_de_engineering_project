@@ -687,6 +687,7 @@ def main() -> None:
         "claim_amount_non_negative": (fact_claims, "Business Rule", "claim_amount"),
         "payment_amount_non_negative": (fact_payment_attempts, "Business Rule", "amount"),
         "feature_payment_failure_rate_valid": (feat_customer_90d, "Business Rule", "f_customer_payment_failure_rate_90d"),
+        "feature_unique_customer_as_of": (feat_customer_90d, "Uniqueness", "as_of_date"),
         "obt_claims_unique_claim_id": (obt_claims_enriched, "Uniqueness", "claim_id"),
         "obt_claims_amount_non_negative": (obt_claims_enriched, "Business Rule", "claim_amount"),
     }

@@ -31,8 +31,6 @@ terraform/
 | Service account | `insurance-data-platform@…` | Bucket-scoped `objectAdmin`, no JSON key ever issued |
 | State bucket | `aide-playground-tfstate` | Created by `bootstrap/`, **survives destroy** |
 
-Region is `northamerica-northeast1` (Montreal), matching the Canadian/Quebec
-shape of the generated insurance dataset.
 
 ## First-time setup
 

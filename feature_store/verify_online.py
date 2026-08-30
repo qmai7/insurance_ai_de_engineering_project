@@ -1,14 +1,25 @@
 """
-Verify the online store actually serves features after materialization.
+Verify the online store actually serves every feature the registry declares.
 
-`feast materialize` reporting success is not proof that a read works: the registry
-can be applied, the job can report rows written, and online reads can still come
-back empty — wrong entity key serialization, a TTL that excludes every row, a
-Redis pointed at the wrong namespace. Each of those looks identical to a healthy
-store until the prediction API starts returning nothing for every request.
+`feast materialize` reporting success is not proof that a read works. The registry
+can be applied, the job can report progress, and online reads can still come back
+empty or stale — wrong entity key serialization, a TTL that excludes every row, a
+Redis pointed at the wrong namespace, or a write the online store silently declined.
+Each of those looks identical to a healthy store until the prediction API starts
+returning nothing.
 
-So this reads real entity keys back out and fails loudly if the values are
-missing. It is the last task of the Materialize Pipeline for that reason.
+So this compares the online store against the offline source it was materialized
+from, entity by entity and feature by feature. Three distinct failures, all silent
+in production:
+
+  MISSING  offline has a value, online has null   -> that feature never reached Redis
+  STALE    both have values, and they disagree    -> Redis holds an older write
+  ABSENT   no feature has a value online          -> the entity was never materialized
+
+The feature list is read from the registry rather than hardcoded, which is the
+point: a feature added to a view is verified automatically. A hardcoded list is
+exactly how `days_since_policy_start` was added to `claim_features`, materialized,
+and served as null with the pipeline reporting success end to end.
 """
 
 from __future__ import annotations
@@ -18,90 +29,120 @@ import sys
 import pandas as pd
 from feast import FeatureStore
 
-# Deliberately small and fixed. The generator is seeded, so these IDs exist in
-# every regenerated dataset and the check is reproducible.
-CUSTOMER_IDS = ["cust_000001", "cust_000002", "cust_000003"]
+# Deliberately small and fixed. Enough entities that a feature which is legitimately
+# null for some rows (risk_segment, absent for pre-schema-change customers) is not
+# mistaken for one that is missing everywhere, and few enough that this stays a
+# seconds-long pipeline step.
+SAMPLE_SIZE = 25
 
-CUSTOMER_FEATURES = [
-    "customer_90d:f_customer_avg_claim_amount_90d",
-    "customer_90d:f_customer_total_claims_90d",
-    "customer_90d:f_customer_total_claim_amount_90d",
-    "customer_90d:f_customer_total_payments_90d",
-    "customer_90d:f_customer_payment_failure_rate_90d",
-]
-
-CLAIM_FEATURES = [
-    "claim_features:claim_amount",
-    "claim_features:claim_to_premium_ratio",
-    "claim_features:claim_type",
-]
+TOLERANCE = 1e-6
 
 
-def check(
-    store: FeatureStore,
-    name: str,
-    rows: list[dict],
-    features: list[str],
-    entity_key: str,
-    source_path: str | None = None,
-) -> bool:
-    result = store.get_online_features(features=features, entity_rows=rows).to_dict()
-    frame = pd.DataFrame(result)
-    print(f"\n{name}:")
-    print(frame.to_string(index=False))
+def view_spec(store: FeatureStore, view_name: str) -> dict:
+    """
+    Everything needed to check a view, read from the registry rather than guessed.
 
-    # A miss in Feast is a None, not an error — so "did it return rows" is not the
-    # question. Whether every requested feature came back populated is.
-    feature_cols = [f.split(":")[1] for f in features]
-    all_null = [c for c in feature_cols if frame[c].isna().all()]
-    if all_null:
-        print(f"  FAIL: no values for {all_null}")
-        return False
+    Guessing is what lets this drift: a check that names its own features cannot
+    fail when the view gains one.
+    """
+    view = next(v for v in store.list_feature_views() if v.name == view_name)
+    entity = store.get_entity(view.entities[0])
+    return {
+        "name": view.name,
+        "features": [f.name for f in view.features],
+        "entity_key": entity.join_key,
+        "source_path": view.batch_source.path,
+        "timestamp_field": view.batch_source.timestamp_field,
+        "ttl_days": view.ttl.days,
+    }
 
-    print(f"  OK: {len(feature_cols)} features populated for {len(rows)} entities")
 
-    if source_path is None:
-        return True
+def offline_latest(spec: dict) -> pd.DataFrame:
+    """
+    The row per entity that the online store is supposed to be holding.
 
-    # Populated is not the same as current.
-    #
-    # Redis persists across runs, so a materialization that loads nothing at all
-    # still leaves the previous run's values in place and the check above passes —
-    # a false green that hid exactly this bug once already: as_of_date was pinned
-    # to a stale literal, incremental materialization loaded zero customer rows,
-    # and verification still reported success on months-old values.
-    #
-    # So compare the served values against the offline source they are supposed to
-    # come from. Any drift between them means the online store is stale.
-    numeric_cols = [
-        c for c in feature_cols if pd.api.types.is_numeric_dtype(frame[c])
-    ]
-    if not numeric_cols:
-        return True
-
-    offline = pd.read_parquet(source_path, columns=[entity_key] + numeric_cols)
-    # Latest row per entity, matching what the online store should hold.
-    offline = offline.drop_duplicates(subset=[entity_key], keep="last")
-    merged = frame[[entity_key] + numeric_cols].merge(
-        offline, on=entity_key, how="inner", suffixes=("_online", "_offline")
+    Sorted by the source's own event timestamp, not by position in the Parquet.
+    feat_customer_90d is a time series with many rows per customer and Spark's
+    part-file order is arbitrary, so taking whichever row happens to come last
+    would compare the online value against a random point in that customer's
+    history and report drift that is not there.
+    """
+    frame = pd.read_parquet(
+        spec["source_path"],
+        columns=[spec["entity_key"], spec["timestamp_field"]] + spec["features"],
     )
-    if merged.empty:
-        print(f"  FAIL: none of the sampled {entity_key}s exist in the offline source")
+    return (
+        frame.sort_values(spec["timestamp_field"])
+        .drop_duplicates(subset=[spec["entity_key"]], keep="last")
+        .drop(columns=[spec["timestamp_field"]])
+        .reset_index(drop=True)
+    )
+
+
+def disagreements(online_row: pd.Series, offline_row: pd.Series, features: list[str]) -> list[str]:
+    """Per-feature comparison, typed: numbers by tolerance, everything else by equality."""
+    problems = []
+    for feature in features:
+        got, want = online_row[feature], offline_row[feature]
+
+        if pd.isna(want):
+            # Nothing to serve. A null online is the correct answer.
+            continue
+        if pd.isna(got):
+            problems.append(f"MISSING {feature}")
+            continue
+
+        if isinstance(want, (int, float)) and isinstance(got, (int, float)):
+            if abs(float(got) - float(want)) > TOLERANCE:
+                problems.append(f"STALE {feature} (online={got} offline={want})")
+        elif got != want:
+            problems.append(f"STALE {feature} (online={got!r} offline={want!r})")
+    return problems
+
+
+def check_view(store: FeatureStore, view_name: str) -> bool:
+    spec = view_spec(store, view_name)
+    offline = offline_latest(spec)
+    sample = offline.head(SAMPLE_SIZE)
+
+    print(f"\n{spec['name']}: {len(spec['features'])} features, ttl={spec['ttl_days']}d")
+    print(f"  offline source {spec['source_path']} ({len(offline)} entities)")
+
+    entity_key = spec["entity_key"]
+    online = store.get_online_features(
+        features=[f"{spec['name']}:{f}" for f in spec["features"]],
+        entity_rows=[{entity_key: v} for v in sample[entity_key]],
+    ).to_df()
+
+    online = online.set_index(entity_key)
+    failures = []
+    for _, offline_row in sample.iterrows():
+        key = offline_row[entity_key]
+
+        # A miss is not an omission. Feast always returns a row per requested
+        # entity and fills it with nulls, so "no online row" and "every feature
+        # null" are the same observation — collapse them into one line instead of
+        # repeating MISSING once per feature, which is what a deleted key produced.
+        expected = [f for f in spec["features"] if not pd.isna(offline_row[f])]
+        if key not in online.index or all(pd.isna(online.loc[key][f]) for f in expected):
+            failures.append(f"  ABSENT {entity_key}={key} (no online values for {len(expected)} features)")
+            continue
+
+        for problem in disagreements(online.loc[key], offline_row, spec["features"]):
+            failures.append(f"  {problem}  [{entity_key}={key}]")
+
+    if failures:
+        print(f"  FAIL: {len(failures)} problem(s) across {len(sample)} entities")
+        # Capped: one broken feature produces one line per sampled entity, and the
+        # first few say everything the rest would.
+        for line in failures[:10]:
+            print(line)
+        if len(failures) > 10:
+            print(f"  ... and {len(failures) - 10} more")
         return False
 
-    stale = []
-    for col in numeric_cols:
-        online_vals = merged[f"{col}_online"].astype(float)
-        offline_vals = merged[f"{col}_offline"].astype(float)
-        if not (online_vals - offline_vals).abs().le(1e-6).all():
-            stale.append(col)
-
-    if stale:
-        print(f"  FAIL: online values disagree with the offline source for {stale}")
-        print("        the online store is serving stale features")
-        return False
-
-    print(f"  OK: {len(numeric_cols)} numeric features match the offline source")
+    print(f"  OK: {len(spec['features'])} features match the offline source "
+          f"for {len(sample)} entities")
     return True
 
 
@@ -110,55 +151,22 @@ def main() -> None:
     print(f"project={store.project} registry={store.config.registry.path}")
     print(f"online_store={store.config.online_store.connection_string}")
 
-    ok = check(
-        store,
-        "customer_90d",
-        [{"customer_id": cid} for cid in CUSTOMER_IDS],
-        CUSTOMER_FEATURES,
-        entity_key="customer_id",
-        source_path=_source_path(store, "customer_90d"),
-    )
+    views = [v.name for v in store.list_feature_views()]
+    print(f"verifying {len(views)} view(s) from the registry: {views}")
 
-    # Claim IDs are not guessable across regenerations the way customer IDs are,
-    # so they are read from the offline Parquet rather than hardcoded.
-    claim_ids = _sample_claim_ids(store)
-    if claim_ids:
-        ok = check(
-            store,
-            "claim_features",
-            [{"claim_id": cid} for cid in claim_ids],
-            CLAIM_FEATURES,
-            entity_key="claim_id",
-            source_path=_source_path(store, "claim_features"),
-        ) and ok
-    else:
-        print("\nclaim_features: FAIL — could not read any claim_id from the offline source")
-        ok = False
+    ok = all([check_view(store, name) for name in views])
 
     if not ok:
-        print("\nOnline store verification FAILED")
+        print(
+            "\nOnline store verification FAILED\n"
+            "\nIf a feature is MISSING everywhere, the usual cause is that the view "
+            "gained a feature while Redis still holds keys from an earlier write. "
+            "Feast declines a write whose event timestamp is not newer than the "
+            "stored one, so re-exporting unchanged data updates nothing — schema "
+            "included. See docs/feature_store.md."
+        )
         sys.exit(1)
     print("\nOnline store verification PASSED")
-
-
-def _source_path(store: FeatureStore, view_name: str) -> str | None:
-    """The Parquet path backing a view, read from the registry rather than guessed."""
-    for view in store.list_feature_views():
-        if view.name == view_name:
-            return view.batch_source.path
-    return None
-
-
-def _sample_claim_ids(store: FeatureStore, limit: int = 3) -> list[str]:
-    """Pull a few real claim_ids straight from the Parquet the view is built on."""
-    source_path = _source_path(store, "claim_features")
-    if not source_path:
-        return []
-
-    # gcsfs is installed for Feast's own gs:// access, so pandas can read the
-    # directory of part files directly.
-    frame = pd.read_parquet(source_path, columns=["claim_id"])
-    return frame["claim_id"].head(limit).tolist()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,90 @@
+##
+# MLflow tracking server + model registry.
+#
+# Deployed as:
+#   helm upgrade --install mlflow charts/mlflow -n ml-ns --wait
+#
+# Requires ./charts/bootstrap-secrets.sh, which creates ml-ns, the annotated
+# `mlflow` / `training` ServiceAccounts, and the mlflow-db Secret.
+##
+
+image:
+  repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/mlflow
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Created out-of-band by bootstrap-secrets.sh, because the Workload Identity
+# annotation needs the GCP service-account email from `terraform output` and
+# committing it into a chart would hardcode one project into the repo.
+serviceAccount:
+  create: false
+  name: mlflow
+
+# ---------------------------------------------------------------------------
+# Backend store — run metadata and the registered-model tables.
+#
+# The same in-cluster Postgres that backs Airflow, in a separate database. A
+# second StatefulSet would double the PVC cost to isolate two schemas that never
+# reference each other, and CLAUDE.md already specifies one Postgres for both.
+#
+# Postgres lives in data-ns, so the FQDN is required — a bare `postgres:5432`
+# resolves only inside data-ns and fails from here.
+#
+# `database` is created by an init container on first start: the official Postgres
+# image only creates POSTGRES_DB at initialisation, and that database is
+# `airflow`.
+# ---------------------------------------------------------------------------
+backend:
+  existingSecret: mlflow-db
+  host: postgres.data-ns.svc.cluster.local
+  port: 5432
+  database: mlflow
+
+# ---------------------------------------------------------------------------
+# Artifact store — the trained model files themselves.
+#
+# A real `gs://` root, with artifact *proxying disabled*, so a logged model's URI
+# is a genuine GCS path. This is not a preference: §7 has KServe resolve the
+# registry's alias to a model URI and pull it directly from GCS. With proxying on,
+# MLflow would record `mlflow-artifacts:/...` URIs that only the tracking server
+# can resolve, and KServe would have nothing to fetch.
+#
+# The cost is that clients upload to GCS themselves and therefore need bucket
+# access — which is why ml-ns/training has a Workload Identity binding too.
+# ---------------------------------------------------------------------------
+artifacts:
+  root: gs://aide-playground-lakehouse/mlflow
+  serve: false
+
+service:
+  type: ClusterIP
+  port: 5000
+
+server:
+  # Two gunicorn workers, not the default four. This server has one user and a
+  # handful of training runs; four workers each hold their own SQLAlchemy pool and
+  # would spend the memory budget on idle capacity.
+  workers: 2
+
+  # MLflow 3 validates the Host header to block DNS-rebinding attacks, and its
+  # default allow-list is localhost plus private *IP ranges*. In-cluster clients
+  # address this server by DNS name, not IP, so every API call arrives with
+  # `Host: mlflow.ml-ns.svc.cluster.local:5000` and is refused with
+  # "Invalid Host header - possible DNS rebinding attack detected".
+  #
+  # The template derives the three forms Kubernetes DNS resolves (bare,
+  # namespace-qualified, fully-qualified) from the release namespace, plus
+  # localhost for `kubectl port-forward`. Anything else goes here — a real
+  # hostname belongs in this list once §10 puts the gateway in front.
+  #
+  # Deliberately not "*": that disables the check entirely, and the protection is
+  # cheap to configure correctly.
+  extraAllowedHosts: []
+
+resources:
+  requests:
+    cpu: 300m
+    memory: 1Gi
+  limits:
+    cpu: 1000m
+    memory: 2Gi

@@ -1,0 +1,115 @@
+# PIPELINE DEFINITION
+# Name: fraud-model-training
+# Description: Feast features -> temporal split -> logistic regression -> MLflow registry -> gate
+# Inputs:
+#    min_lift: float [Default: 2.0]
+components:
+  comp-quality-gate:
+    executorLabel: exec-quality-gate
+    inputDefinitions:
+      parameters:
+        min_lift:
+          parameterType: NUMBER_DOUBLE
+        summary_uri:
+          parameterType: STRING
+  comp-train-and-register:
+    executorLabel: exec-train-and-register
+    inputDefinitions:
+      parameters:
+        summary_uri:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-quality-gate:
+      container:
+        args:
+        - --summary-uri
+        - '{{$.inputs.parameters[''summary_uri'']}}'
+        - --min-lift
+        - '{{$.inputs.parameters[''min_lift'']}}'
+        command:
+        - python
+        - -m
+        - ml.gate
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow.ml-ns.svc.cluster.local:5000
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4
+        resources:
+          cpuRequest: 0.2
+          memoryRequest: 0.536870912
+          resourceCpuRequest: 200m
+          resourceMemoryRequest: 512Mi
+    exec-train-and-register:
+      container:
+        args:
+        - --summary-uri
+        - '{{$.inputs.parameters[''summary_uri'']}}'
+        command:
+        - python
+        - -m
+        - ml.train
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow.ml-ns.svc.cluster.local:5000
+        - name: LAKEHOUSE_ROOT
+          value: gs://aide-playground-lakehouse
+        - name: FEAST_REPO_PATH
+          value: /feature_store
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4
+        resources:
+          cpuLimit: 2.0
+          cpuRequest: 1.0
+          memoryLimit: 4.294967296
+          memoryRequest: 3.221225472
+          resourceCpuLimit: '2'
+          resourceCpuRequest: '1'
+          resourceMemoryLimit: 4Gi
+          resourceMemoryRequest: 3Gi
+pipelineInfo:
+  description: Feast features -> temporal split -> logistic regression -> MLflow registry
+    -> gate
+  name: fraud-model-training
+root:
+  dag:
+    tasks:
+      quality-gate:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-quality-gate
+        dependentTasks:
+        - train-and-register
+        inputs:
+          parameters:
+            min_lift:
+              componentInputParameter: min_lift
+            summary_uri:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines/{{$.pipeline_job_uuid}}/summary.json
+        taskInfo:
+          name: quality-gate
+      train-and-register:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-and-register
+        inputs:
+          parameters:
+            summary_uri:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines/{{$.pipeline_job_uuid}}/summary.json
+        retryPolicy:
+          backoffDuration: 0s
+          backoffFactor: 2.0
+          backoffMaxDuration: 3600s
+        taskInfo:
+          name: train-and-register
+  inputDefinitions:
+    parameters:
+      min_lift:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0

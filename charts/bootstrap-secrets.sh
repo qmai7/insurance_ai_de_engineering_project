@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ##
-# Create the cluster Secrets the charts expect, with generated values.
+# Create the namespaces, ServiceAccounts and Secrets the charts expect.
 #
 # Run once per cluster, before deploying. The cluster is ephemeral, so this runs
 # again after every `terraform destroy` — hence a script rather than a list of
@@ -9,11 +9,12 @@
 # Nothing here is committed: values are generated locally and live only in the
 # cluster, which is what keeps database and session keys out of git (§14).
 #
-#   ./charts/bootstrap-secrets.sh [namespace]
+#   ./charts/bootstrap-secrets.sh [data-namespace] [ml-namespace]
 ##
 set -euo pipefail
 
 NS="${1:-data-ns}"
+ML_NS="${2:-ml-ns}"
 
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
@@ -64,3 +65,47 @@ kubectl get secrets -n "$NS" \
   postgres-credentials airflow-metadata-db airflow-webserver-secret \
   -o custom-columns=NAME:.metadata.name,KEYS:.data --no-headers 2>/dev/null |
   sed 's/map\[/ /; s/\]//' | awk '{print "  " $1}'
+
+# ---------------------------------------------------------------------------
+# ml-ns: MLflow tracking server and training jobs.
+#
+# The ServiceAccounts are created here rather than by the charts because the
+# Workload Identity annotation needs the GCP service-account email, which comes
+# from Terraform state. Baking one project's email into a committed chart would
+# make the repo non-portable, and reading it here keeps the single source of
+# truth in Terraform.
+# ---------------------------------------------------------------------------
+echo
+kubectl create namespace "$ML_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+GSA=$(terraform -chdir="$(dirname "$0")/../terraform" output -raw data_platform_service_account 2>/dev/null || true)
+if [[ -z "$GSA" ]]; then
+  echo "WARNING: could not read data_platform_service_account from terraform output."
+  echo "         ml-ns ServiceAccounts will be created without the Workload Identity"
+  echo "         annotation, and MLflow will fail on its first artifact write."
+fi
+
+# Two identities, matching the two bindings in terraform.tfvars: the tracking
+# server writes artifacts, a training run reads features and writes artifacts.
+for KSA in mlflow training; do
+  kubectl create serviceaccount "$KSA" -n "$ML_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  if [[ -n "$GSA" ]]; then
+    kubectl annotate serviceaccount "$KSA" -n "$ML_NS" \
+      "iam.gke.io/gcp-service-account=$GSA" --overwrite >/dev/null
+  fi
+  echo "$ML_NS/$KSA: ServiceAccount ready${GSA:+ (impersonates $GSA)}"
+done
+
+# MLflow's backend store. Same Postgres instance as Airflow, separate database,
+# reached across namespaces — hence the FQDN. The password is the one above,
+# because it is the same server; a second password would need a second role.
+MLFLOW_DB=mlflow
+PGHOST="postgres.${NS}.svc.cluster.local"
+
+kubectl create secret generic mlflow-db -n "$ML_NS" \
+  --from-literal="username=${PGUSER}" \
+  --from-literal="password=${PGPASS}" \
+  --from-literal="database=${MLFLOW_DB}" \
+  --from-literal="uri=postgresql://${PGUSER}:${PGPASS}@${PGHOST}:5432/${MLFLOW_DB}" \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+echo "$ML_NS/mlflow-db: connection string written (database '${MLFLOW_DB}' on ${PGHOST})"

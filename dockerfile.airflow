@@ -7,20 +7,7 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# GCS connector for Spark, baked in rather than resolved from Maven at job start.
-#
-# Every Airflow task is its own pod in the cluster, so Ivy resolution would repeat
-# the download on each task and fail outright if the cluster had no egress.
-#
-# The connector links against Hadoop internals, so its version is tied to the
-# Hadoop that Spark bundles — 3.3.4 for Spark 3.5.1. Both newer lines were tried
-# against it and fail at runtime, not at build time:
-#
-#   3.1.x  -> NoSuchMethodError  VectoredReadUtils.validateRangeRequest  (wants Hadoop 3.4)
-#   3.0.19 -> NoClassDefFoundError Options$OpenFileOptions               (wants Hadoop >= 3.3.5)
-#
-# hadoop3-2.2.x is the line built against Hadoop 3.3.x. Revisit this pin only
-# together with a Spark upgrade.
+# Install GCS connector for Spark
 ARG GCS_CONNECTOR_VERSION=hadoop3-2.2.30
 RUN mkdir -p /opt/spark-jars \
     && curl -fsSL \
@@ -44,3 +31,9 @@ RUN pip install --no-cache-dir \
 # code change, which is what the CI/CD pipeline in §8 automates.
 COPY --chown=airflow:root dags/ /opt/airflow/dags/
 COPY --chown=airflow:root jobs/ /opt/airflow/jobs/
+
+# If manually build & push this image 
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark:0.1.9 \
+#  -f dockerfile.airflow 
+
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark:0.1.9

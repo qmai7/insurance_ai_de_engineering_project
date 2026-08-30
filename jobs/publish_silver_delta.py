@@ -53,7 +53,7 @@ def main() -> None:
 
     for table_name in TABLES:
         publish_table(spark, table_name)
-
+    
     # Clear staging only after every table has been published successfully, so
     # stale candidate data cannot be reused by a later run. Children are removed
     # individually rather than deleting the root: locally the root is a

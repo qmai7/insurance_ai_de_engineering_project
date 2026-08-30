@@ -41,6 +41,13 @@ CHECKS = [
     ("claim_amount_non_negative", "select count() from gold_insurance.fact_claims where claim_amount < 0"),
     ("payment_amount_non_negative", "select count() from gold_insurance.fact_payment_attempts where amount < 0"),
     ("feature_payment_failure_rate_valid", "select count() from gold_insurance.feat_customer_90d where f_customer_payment_failure_rate_90d < 0 or f_customer_payment_failure_rate_90d > 1"),
+    # feat_customer_90d is a time series at (customer_id, as_of_date) grain, and
+    # that pair is what Feast treats as the identity of a feature row. A duplicate
+    # pair is not a harmless double-count: Feast breaks event_timestamp ties on
+    # created_timestamp, which is identical for every row in an export, so the
+    # winner would be arbitrary and a training join would silently pick between two
+    # different histories for the same claim.
+    ("feature_unique_customer_as_of", "select count() from (select customer_id, as_of_date from gold_insurance.feat_customer_90d group by customer_id, as_of_date having count() > 1)"),
     ("obt_claims_unique_claim_id", "select count() from (select claim_id from gold_insurance.obt_claims_enriched group by claim_id having count() > 1)"),
     ("obt_claims_amount_non_negative", "select count() from gold_insurance.obt_claims_enriched where claim_amount < 0"),
 ]
