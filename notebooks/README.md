@@ -10,7 +10,7 @@ Design decisions and results are written up in [`../docs/ml.md`](../docs/ml.md).
 
 The notebook does **not** run in the project's main environment, and this is the
 same conflict that forced two container images (see
-[`../dockerfile.feast`](../dockerfile.feast)):
+[`../docker_image/dockerfile.feast`](../docker_image/dockerfile.feast)):
 
 `feast[redis,gcp]` resolves to numpy 2.x, and PySpark 3.5.1 does not work with
 numpy 2.x. The root `pyproject.toml` env has PySpark in it because every batch job
@@ -35,11 +35,11 @@ python3 -m venv .venv-ml
 `mlflow` and `kfp` are here for the `ml/` package rather than the notebook: `kfp`
 compiles [`../ml/pipeline.py`](../ml/pipeline.py), and `mlflow` lets
 `python -m ml.train` run against a port-forwarded tracking server. Both are
-pinned to the versions in [`../dockerfile.mlflow`](../dockerfile.mlflow) and
-[`../dockerfile.training`](../dockerfile.training) — an MLflow client and server
+pinned to the versions in [`../docker_image/dockerfile.mlflow`](../docker_image/dockerfile.mlflow) and
+[`../docker_image/dockerfile.training`](../docker_image/dockerfile.training) — an MLflow client and server
 share a registry schema.
 
-The Feast version is pinned to match [`../dockerfile.feast`](../dockerfile.feast).
+The Feast version is pinned to match [`../docker_image/dockerfile.feast`](../docker_image/dockerfile.feast).
 It has to: the registry in GCS is written by that image and read here, and the
 entity-key serialization version is part of the on-disk format.
 

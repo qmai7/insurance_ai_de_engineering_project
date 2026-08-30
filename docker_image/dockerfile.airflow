@@ -34,6 +34,6 @@ COPY --chown=airflow:root jobs/ /opt/airflow/jobs/
 
 # If manually build & push this image 
 #docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark:0.1.9 \
-#  -f dockerfile.airflow 
+#  -f docker_image/dockerfile.airflow .
 
 #docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark:0.1.9

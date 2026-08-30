@@ -130,7 +130,7 @@ every Spark job's pandas conversion — including the export that feeds Feast.
 
 So the Materialize Pipeline spans two images: the export task runs in the Airflow
 image (Spark, Delta, GCS connector), and the Feast tasks run as
-`KubernetesPodOperator` against [`dockerfile.feast`](../dockerfile.feast). This
+`KubernetesPodOperator` against [`dockerfile.feast`](../docker_image/dockerfile.feast). This
 also matches §8, which wants a separate pipeline per job.
 
 ## Verification

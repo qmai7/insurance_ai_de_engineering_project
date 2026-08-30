@@ -33,6 +33,6 @@ CMD ["mlflow", "--version"]
 
 # If manually build & push this image
 #docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/mlflow:0.1.0 \
-#  -f dockerfile.mlflow .
+#  -f docker_image/dockerfile.mlflow .
 
 #docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/mlflow:0.1.0

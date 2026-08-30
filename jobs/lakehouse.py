@@ -66,7 +66,7 @@ GCP_PROJECT = os.getenv("GCP_PROJECT", "")
 SPARK_SCRATCH_DIR = os.getenv("SPARK_SCRATCH_DIR", str(BASE_DIR))
 SPARK_WAREHOUSE_DIR = os.getenv("SPARK_WAREHOUSE_DIR", f"{SPARK_SCRATCH_DIR.rstrip('/')}/spark-warehouse")
 
-# Baked into the Airflow image (see dockerfile.airflow). Resolving the connector
+# Baked into the Airflow image (see docker_image/dockerfile.airflow). Resolving the connector
 # from Maven at job start would mean every task pod downloads it again, and would
 # fail outright the moment the cluster has no egress.
 GCS_CONNECTOR_JAR = "/opt/spark-jars/gcs-connector-hadoop3-shaded.jar"

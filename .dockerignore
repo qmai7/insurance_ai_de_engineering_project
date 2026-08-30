@@ -3,6 +3,7 @@
 # file, none of which belong in the image.
 
 .venv/
+.venv-ml/
 venv/
 # Leading **/ because .dockerignore patterns anchor at the context root —
 # a bare "__pycache__/" would miss dags/__pycache__ and jobs/__pycache__.

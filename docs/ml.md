@@ -213,7 +213,7 @@ heavier than the model it produces.
 ## MLflow (§7)
 
 Deployed by [`charts/mlflow`](../charts/mlflow) into `ml-ns`, image
-[`dockerfile.mlflow`](../dockerfile.mlflow).
+[`dockerfile.mlflow`](../docker_image/dockerfile.mlflow).
 
 - **Backend store** — the same in-cluster Postgres that backs Airflow, in its own
   `mlflow` database, created by an init container because the official Postgres

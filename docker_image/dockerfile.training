@@ -56,6 +56,6 @@ CMD ["python", "-m", "ml.train"]
 
 # If manually build & push this image
 #docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4 \
-#  -f dockerfile.training .
+#  -f docker_image/dockerfile.training .
 
 #docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4

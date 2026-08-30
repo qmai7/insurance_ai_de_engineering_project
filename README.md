@@ -198,7 +198,11 @@ docker exec insurance_airflow_scheduler python /opt/airflow/jobs/publish_streami
 insurance_ai_de_engineering_project/
 ├── README.md                         # This document — architecture, design, and run guide
 ├── docker-compose.yml                # All services: Airflow, Postgres, ClickHouse, Kafka, Flink, DataHub
-├── dockerfile.airflow                # Custom Airflow image (adds Spark, Delta, project Python deps)
+├── docker_image/                     # All container images, one dockerfile per deployable
+│   ├── dockerfile.airflow            # Airflow/Spark image (adds Spark, Delta, GCS connector, project deps)
+│   ├── dockerfile.feast              # Feast CLI image (materialize + online verification)
+│   ├── dockerfile.mlflow             # MLflow tracking server + model registry
+│   └── dockerfile.training           # Training job image (Feast SDK, scikit-learn, MLflow client)
 ├── pyproject.toml                    # Python project metadata & dependencies (uv-managed)
 ├── uv.lock                           # Pinned dependency lockfile for reproducible envs
 ├── main.py                           # Placeholder entrypoint (not part of the pipeline)

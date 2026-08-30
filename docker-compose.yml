@@ -11,7 +11,7 @@
 x-airflow-common: &airflow-common
   build:
     context: .
-    dockerfile: dockerfile.airflow
+    dockerfile: docker_image/dockerfile.airflow
 
   image: insurance-airflow:latest
   environment: &airflow-common-env
