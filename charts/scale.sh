@@ -32,7 +32,29 @@ WORKLOADS=(
   "statefulset/postgres data-ns 1"
   "statefulset/clickhouse data-ns 1"
   "statefulset/redis api-serving-ns 1"
+  "deployment/mlflow ml-ns 1"
 )
+
+# Kubeflow Pipelines is 12 deployments, so it is scaled by label rather than
+# named one by one — and the label is upstream's own, applied to every resource
+# in the install, so a KFP version bump that adds a component parks with the
+# rest instead of quietly staying billed.
+#
+# It is by far the biggest single line on the bill while idle: 12 pods against
+# Autopilot's 250m / 512Mi per-pod floor is roughly 3 vCPU and 6 GiB of
+# requests for a control plane doing nothing between two runs.
+KFP_LABEL="application-crd-id=kubeflow-pipelines"
+KFP_NS="ml-ns"
+
+scale_kfp() {
+  local replicas="$1"
+  if kubectl get deployment -l "$KFP_LABEL" -n "$KFP_NS" 2>/dev/null | grep -q .; then
+    kubectl scale deployment -l "$KFP_LABEL" -n "$KFP_NS" --replicas="$replicas" >/dev/null
+    printf '  %-34s -> %s replicas\n' "$KFP_NS/kubeflow-pipelines (12)" "$replicas"
+  else
+    printf '  %-34s (absent, skipped)\n' "$KFP_NS/kubeflow-pipelines"
+  fi
+}
 
 scale() {
   local target="$1" ns="$2" replicas="$3"
@@ -51,6 +73,7 @@ case "$ACTION" in
       read -r target ns _ <<<"$w"
       scale "$target" "$ns" 0
     done
+    scale_kfp 0
     echo
     echo "Nodes drain on their own once the pods are gone; give it a few minutes."
     echo "PVCs are retained, so no data is lost:"
@@ -68,10 +91,14 @@ case "$ACTION" in
     echo "  waiting for datastores to become ready..."
     kubectl wait --for=condition=ready pod -l app=postgres -n data-ns --timeout=300s >/dev/null 2>&1 || true
     kubectl wait --for=condition=ready pod -l app=clickhouse -n data-ns --timeout=300s >/dev/null 2>&1 || true
-    for w in "deployment/airflow-scheduler data-ns 1" "deployment/airflow-webserver data-ns 1"; do
+    for w in "deployment/airflow-scheduler data-ns 1" "deployment/airflow-webserver data-ns 1" "deployment/mlflow ml-ns 1"; do
       read -r target ns replicas <<<"$w"
       scale "$target" "$ns" "$replicas"
     done
+    # KFP goes up in one shot rather than database-first: every component that
+    # depends on another has a `wait-for-*` init container that retries for five
+    # minutes, which is longer than Autopilot takes to schedule the whole set.
+    scale_kfp 1
     echo
     echo "Autopilot must provision nodes again, so the first pods take a few minutes."
     echo "Then:  kubectl port-forward -n data-ns svc/airflow-webserver 8080:8080"
@@ -82,7 +109,7 @@ case "$ACTION" in
     kubectl get deploy,statefulset -A --no-headers 2>/dev/null |
       grep -vE "kube-system|gke-|gmp-" | awk '{print "  "$1"/"$2"  "$3}'
     echo "Nodes: $(kubectl get nodes --no-headers 2>/dev/null | wc -l)"
-    echo "Pods (ours): $(kubectl get pods -A --no-headers 2>/dev/null | grep -cE "^(data-ns|api-serving-ns)" || true)"
+    echo "Pods (ours): $(kubectl get pods -A --no-headers 2>/dev/null | grep -cE "^(data-ns|api-serving-ns|ml-ns)" || true)"
     ;;
 
   *)

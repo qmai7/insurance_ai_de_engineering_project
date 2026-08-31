@@ -1,0 +1,32 @@
+##
+# Kubeflow Pipelines — cluster-scoped half (CRDs + the cache-deployer's
+# ClusterRole).
+#
+# KFP's install is deliberately two-phase: the CRDs must be established before
+# the namespaced controllers that watch them start, or the workflow-controller
+# crashloops on a missing `workflows.argoproj.io`. Apply this first, wait, then
+# apply `charts/kubeflow/`.
+#
+# Upstream ships `manifests/kustomize/cluster-scoped-resources`, which we do NOT
+# reference: it also creates a namespace literally named `kubeflow`. Namespace
+# objects are cluster-scoped, so kustomize's `namespace:` transformer leaves
+# their name alone — pointing at that overlay would leave a stray empty
+# namespace behind. Referencing the four sub-bases directly skips it, and
+# `ml-ns` already exists (bootstrap-secrets.sh creates it).
+##
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Rewrites the ServiceAccount subject namespace in
+# kubeflow-pipelines-cache-deployer-clusterrolebinding, which upstream leaves
+# for the transformer to fill in.
+namespace: ml-ns
+
+resources:
+  - github.com/kubeflow/pipelines/manifests/kustomize/third-party/application/cluster-scoped?ref=2.17.0
+  - github.com/kubeflow/pipelines/manifests/kustomize/third-party/argo/installs/namespace/cluster-scoped?ref=2.17.0
+  - github.com/kubeflow/pipelines/manifests/kustomize/base/pipeline/cluster-scoped?ref=2.17.0
+# Upstream's fourth base, base/cache-deployer/cluster-scoped, is deliberately
+# absent: the cache-deployer itself cannot run on Autopilot, so its ClusterRole
+# would grant CSR-signing rights to a workload that does not exist. See
+# ../patches/remove-v1-cache-server.yaml for the full reasoning.

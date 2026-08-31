@@ -10,27 +10,30 @@ components:
       parameters:
         min_lift:
           parameterType: NUMBER_DOUBLE
-        summary_uri:
+        run_id:
+          parameterType: STRING
+        summary_root:
           parameterType: STRING
   comp-train-and-register:
     executorLabel: exec-train-and-register
     inputDefinitions:
       parameters:
-        summary_uri:
+        run_id:
+          parameterType: STRING
+        summary_root:
           parameterType: STRING
 deploymentSpec:
   executors:
     exec-quality-gate:
       container:
         args:
-        - --summary-uri
-        - '{{$.inputs.parameters[''summary_uri'']}}'
-        - --min-lift
+        - '{{$.inputs.parameters[''summary_root'']}}'
+        - '{{$.inputs.parameters[''run_id'']}}'
         - '{{$.inputs.parameters[''min_lift'']}}'
         command:
-        - python
-        - -m
-        - ml.gate
+        - sh
+        - -c
+        - python -m ml.gate --summary-uri "$0/$1/summary.json" --min-lift "$2"
         env:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow.ml-ns.svc.cluster.local:5000
@@ -43,12 +46,12 @@ deploymentSpec:
     exec-train-and-register:
       container:
         args:
-        - --summary-uri
-        - '{{$.inputs.parameters[''summary_uri'']}}'
+        - '{{$.inputs.parameters[''summary_root'']}}'
+        - '{{$.inputs.parameters[''run_id'']}}'
         command:
-        - python
-        - -m
-        - ml.train
+        - sh
+        - -c
+        - python -m ml.train --summary-uri "$0/$1/summary.json"
         env:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow.ml-ns.svc.cluster.local:5000
@@ -84,9 +87,12 @@ root:
           parameters:
             min_lift:
               componentInputParameter: min_lift
-            summary_uri:
+            run_id:
               runtimeValue:
-                constant: gs://aide-playground-lakehouse/mlflow/pipelines/{{$.pipeline_job_uuid}}/summary.json
+                constant: '{{$.pipeline_job_uuid}}'
+            summary_root:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines
         taskInfo:
           name: quality-gate
       train-and-register:
@@ -96,9 +102,12 @@ root:
           name: comp-train-and-register
         inputs:
           parameters:
-            summary_uri:
+            run_id:
               runtimeValue:
-                constant: gs://aide-playground-lakehouse/mlflow/pipelines/{{$.pipeline_job_uuid}}/summary.json
+                constant: '{{$.pipeline_job_uuid}}'
+            summary_root:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines
         retryPolicy:
           backoffDuration: 0s
           backoffFactor: 2.0

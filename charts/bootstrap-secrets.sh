@@ -85,9 +85,15 @@ if [[ -z "$GSA" ]]; then
   echo "         annotation, and MLflow will fail on its first artifact write."
 fi
 
-# Two identities, matching the two bindings in terraform.tfvars: the tracking
-# server writes artifacts, a training run reads features and writes artifacts.
-for KSA in mlflow training; do
+# Three identities, matching the ml-ns bindings in terraform.tfvars: the
+# tracking server writes artifacts, a training run reads features and writes
+# artifacts, and Kubeflow's `pipeline-runner` is what step pods actually run as.
+#
+# `pipeline-runner` is also created by `kubectl apply -k charts/kubeflow`, so the
+# two overlap by design and the order does not matter. Creating it here first is
+# safe: kubectl's three-way merge leaves annotations it does not manage alone, so
+# a later KFP apply will not strip the Workload Identity annotation.
+for KSA in mlflow training pipeline-runner; do
   kubectl create serviceaccount "$KSA" -n "$ML_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   if [[ -n "$GSA" ]]; then
     kubectl annotate serviceaccount "$KSA" -n "$ML_NS" \
@@ -109,3 +115,54 @@ kubectl create secret generic mlflow-db -n "$ML_NS" \
   --from-literal="uri=postgresql://${PGUSER}:${PGPASS}@${PGHOST}:5432/${MLFLOW_DB}" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 echo "$ML_NS/mlflow-db: connection string written (database '${MLFLOW_DB}' on ${PGHOST})"
+
+# ---------------------------------------------------------------------------
+# Kubeflow Pipelines' own credentials.
+#
+# KFP ships these as committed manifests: MySQL as root with *no* password at
+# all, and `minio`/`minio123` for its object store. charts/kubeflow deletes both
+# so they are generated here instead — §14, and the same rule the rest of this
+# script follows.
+#
+# Must run *before* `kubectl apply -k charts/kubeflow`: the api-server and the
+# database pod both mount these at startup.
+#
+# Reused rather than rotated, for the reason documented at the top of this file:
+# the mysql image only applies MYSQL_ROOT_PASSWORD to an empty data directory, so
+# a fresh password against KFP's existing PVC would lock the api server out of
+# its own database. Rotating means deleting mysql-pv-claim too.
+# ---------------------------------------------------------------------------
+echo
+
+kfp_password() {
+  local secret="$1" key="$2"
+  if kubectl get secret "$secret" -n "$ML_NS" >/dev/null 2>&1; then
+    kubectl get secret "$secret" -n "$ML_NS" -o jsonpath="{.data.${key}}" | base64 -d
+  else
+    openssl rand -hex 24
+  fi
+}
+
+# KFP's metadata database. Upstream runs it as root with an empty password and
+# MYSQL_ALLOW_EMPTY_PASSWORD, which charts/kubeflow replaces with a real one.
+# Only applied to an empty data directory, hence the reuse — see above.
+KFP_DBPASS=$(kfp_password mysql-secret password)
+
+kubectl create secret generic mysql-secret -n "$ML_NS" \
+  --from-literal="username=root" \
+  --from-literal="password=${KFP_DBPASS}" \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+echo "$ML_NS/mysql-secret: KFP database password set (user 'root')"
+
+# SeaweedFS is KFP's internal S3-compatible artifact store. It reads this secret
+# on every start to configure its own S3 user, so the value is authoritative
+# rather than something it remembers — but the config lives on its PVC, so
+# changing the key on an existing install needs seaweedfs-pvc deleted too.
+SEAWEED_KEY=$(kfp_password mlpipeline-minio-artifact accesskey)
+SEAWEED_SECRET=$(kfp_password mlpipeline-minio-artifact secretkey)
+
+kubectl create secret generic mlpipeline-minio-artifact -n "$ML_NS" \
+  --from-literal="accesskey=${SEAWEED_KEY}" \
+  --from-literal="secretkey=${SEAWEED_SECRET}" \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+echo "$ML_NS/mlpipeline-minio-artifact: SeaweedFS credentials set"

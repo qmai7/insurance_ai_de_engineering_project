@@ -1,0 +1,25 @@
+##
+# Point the API server's object store at ml-ns.
+#
+# Upstream hardcodes the namespace into the value:
+#
+#   OBJECTSTORECONFIG_HOST: seaweedfs.kubeflow
+#
+# It is a string inside an env value, so kustomize's namespace transformer
+# cannot see it — the same class of bug as the Argo artifact repository endpoint
+# handled in kustomization.yaml, and the same fix. Left alone, the API server
+# aborts at boot with "failed to initialize object store", because the host it
+# was told to use lives in a namespace that does not exist here.
+##
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-pipeline
+spec:
+  template:
+    spec:
+      containers:
+        - name: ml-pipeline-api-server
+          env:
+            - name: OBJECTSTORECONFIG_HOST
+              value: seaweedfs.ml-ns

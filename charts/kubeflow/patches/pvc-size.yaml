@@ -1,0 +1,37 @@
+##
+# Shrink KFP's two 20 GiB volumes to 10 GiB.
+#
+# 40 GiB of pd-balanced is the one KFP charge that keeps accruing while the
+# platform is parked, and neither volume holds anything close to 20 GiB: run
+# metadata and MLMD lineage rows in one, compiled pipeline packages measured in
+# kilobytes in the other. 10 GiB is the floor — pd-balanced does not go smaller.
+#
+# Not shrinkable after the fact: a PVC can grow but never shrink, so changing
+# this on an existing install means deleting the claim and losing run history.
+#
+# `namespace: kubeflow` is not a mistake and must not be "corrected" to ml-ns.
+# Kustomize matches a patch against a resource's *original* id, and these claims
+# are among the few KFP manifests that hardcode a namespace in their source
+# file — so the patch has to name the namespace they were written with. The
+# overlay's `namespace: ml-ns` still moves them afterwards. Omitting it fails
+# the build with "failed to find unique target for patch".
+##
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pv-claim
+  namespace: kubeflow
+spec:
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweedfs-pvc
+  namespace: kubeflow
+spec:
+  resources:
+    requests:
+      storage: 10Gi

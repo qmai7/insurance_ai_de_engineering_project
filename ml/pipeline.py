@@ -6,10 +6,10 @@ Kubeflow training pipeline (CLAUDE.md §5).
 Compile it:
     .venv-ml/bin/python -m ml.pipeline            # writes ml/pipeline.yaml
 
-Submit it (once a KFP control plane exists in the cluster):
-    from kfp.client import Client
-    Client(host="http://ml-pipeline.ml-ns.svc.cluster.local:8888").create_run_from_pipeline_package(
-        "ml/pipeline.yaml", arguments={"min_lift": 2.0})
+Submit it — `ml/submit.py` compiles and submits in one step, so the spec cannot
+go stale behind the source:
+    kubectl port-forward -n ml-ns svc/ml-pipeline 8888:8888 &
+    .venv-ml/bin/python -m ml.submit --wait
 
 Two design choices worth stating, because both trade capability for simplicity:
 
@@ -34,7 +34,7 @@ removed. This is a known, deliberate gap rather than an oversight.
 # NOTE: deliberately no `from __future__ import annotations` here.
 #
 # KFP resolves component signatures by reflection at decoration time. With
-# postponed evaluation, every annotation is a string, so `summary_uri: str` is
+# postponed evaluation, every annotation is a string, so `summary_root: str` is
 # read as an *artifact type* named "str" and compilation fails with
 # "Artifacts must have both a schema_title and a schema_version".
 from pathlib import Path
@@ -50,26 +50,43 @@ LAKEHOUSE_ROOT = "gs://aide-playground-lakehouse"
 
 # Run-scoped, so concurrent runs cannot overwrite each other's summary and a past
 # run's inputs stay readable for debugging.
-SUMMARY_URI = f"{LAKEHOUSE_ROOT}/mlflow/pipelines/{dsl.PIPELINE_JOB_ID_PLACEHOLDER}/summary.json"
+#
+# The run id arrives as its own argument and the path is assembled by the shell
+# inside the container, which is uglier than an f-string and is the only thing
+# that works. Interpolating the placeholder into a longer string in Python —
+#
+#     f"{LAKEHOUSE_ROOT}/mlflow/pipelines/{dsl.PIPELINE_JOB_ID_PLACEHOLDER}/..."
+#
+# — compiles to a constant input value, and KFP substitutes a placeholder only
+# where it is the *entire* value. Worse, it fails silently: both steps agree on
+# the same unsubstituted path, so the run goes green and the summary is written
+# to and read from a literal GCS directory named `{{$.pipeline_job_uuid}}`. The
+# only symptom is that every run overwrites the last one, which is exactly the
+# property this was meant to provide.
+SUMMARY_ROOT = f"{LAKEHOUSE_ROOT}/mlflow/pipelines"
 
 
 @dsl.container_component
-def train_and_register(summary_uri: str):
+def train_and_register(summary_root: str, run_id: str):
     """Build the training set from Feast, train, evaluate, log and register."""
     return dsl.ContainerSpec(
         image=TRAINING_IMAGE,
-        command=["python", "-m", "ml.train"],
-        args=["--summary-uri", summary_uri],
+        command=["sh", "-c", 'python -m ml.train --summary-uri "$0/$1/summary.json"'],
+        args=[summary_root, run_id],
     )
 
 
 @dsl.container_component
-def quality_gate(summary_uri: str, min_lift: float):
+def quality_gate(summary_root: str, run_id: str, min_lift: float):
     """Fail the run if the registered version is not a promotion candidate."""
     return dsl.ContainerSpec(
         image=TRAINING_IMAGE,
-        command=["python", "-m", "ml.gate"],
-        args=["--summary-uri", summary_uri, "--min-lift", min_lift],
+        command=[
+            "sh",
+            "-c",
+            'python -m ml.gate --summary-uri "$0/$1/summary.json" --min-lift "$2"',
+        ],
+        args=[summary_root, run_id, min_lift],
     )
 
 
@@ -78,7 +95,9 @@ def quality_gate(summary_uri: str, min_lift: float):
     description="Feast features -> temporal split -> logistic regression -> MLflow registry -> gate",
 )
 def fraud_training_pipeline(min_lift: float = 2.0):
-    train = train_and_register(summary_uri=SUMMARY_URI)
+    train = train_and_register(
+        summary_root=SUMMARY_ROOT, run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER
+    )
     train.set_env_variable("MLFLOW_TRACKING_URI", MLFLOW_TRACKING_URI)
     train.set_env_variable("LAKEHOUSE_ROOT", LAKEHOUSE_ROOT)
     train.set_env_variable("FEAST_REPO_PATH", "/feature_store")
@@ -89,7 +108,11 @@ def fraud_training_pipeline(min_lift: float = 2.0):
     # improves on a second attempt.
     train.set_retry(0)
 
-    gate = quality_gate(summary_uri=SUMMARY_URI, min_lift=min_lift)
+    gate = quality_gate(
+        summary_root=SUMMARY_ROOT,
+        run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER,
+        min_lift=min_lift,
+    )
     gate.set_env_variable("MLFLOW_TRACKING_URI", MLFLOW_TRACKING_URI)
     gate.set_cpu_request("200m").set_memory_request("512Mi")
     # The explicit dependency: the gate reads what training wrote, and nothing in

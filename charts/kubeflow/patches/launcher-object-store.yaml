@@ -1,0 +1,46 @@
+##
+# Tell the step launcher where the object store is.
+#
+# The API server's `OBJECTSTORECONFIG_HOST` is its own connection, not the
+# launcher's. Each step pod runs `kfp-launcher`, which resolves the `minio://`
+# pipeline root separately — and with no `providers` key in the `kfp-launcher`
+# ConfigMap it takes `getDefaultMinioSessionInfo()`, whose endpoint is the
+# compile-time constant
+#
+#   const DefaultEndpointInMultiUserMode = "seaweedfs.kubeflow:9000"
+#
+# So the step's own work succeeds and the pod dies afterwards, uploading its
+# logs:
+#
+#   All upload artifact attempts failed ... dial tcp: lookup seaweedfs.kubeflow
+#   ... no such host
+#
+# which surfaces in the UI as a failed task with a green log full of correct
+# output — the model trained, registered in MLflow, and the run still went red.
+#
+# The credentials duplicate what the API server already reads from the same
+# Secret because the launcher resolves them itself, from inside a step pod that
+# has no KFP env: `secretRef` is how it is told which Secret to read.
+#
+# `forcePathStyle` is required for anything that is not real S3. Without it the
+# SDK addresses the bucket as `mlpipeline.seaweedfs.ml-ns`, a hostname that does
+# not resolve.
+##
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kfp-launcher
+data:
+  providers: |
+    minio:
+      default:
+        endpoint: seaweedfs.ml-ns:9000
+        region: minio
+        disableSSL: true
+        forcePathStyle: true
+        credentials:
+          fromEnv: false
+          secretRef:
+            secretName: mlpipeline-minio-artifact
+            accessKeyKey: accesskey
+            secretKeyKey: secretkey

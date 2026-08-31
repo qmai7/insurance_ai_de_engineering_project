@@ -19,4 +19,10 @@ workload_identity_bindings = [
   # split a config change instead of a redeployment.
   "ml-ns/mlflow",
   "ml-ns/training",
+  # Kubeflow Pipelines runs every step pod under its own `pipeline-runner` KSA,
+  # not the one the equivalent kubectl Job uses — so without this binding the
+  # training step fails at the first Feast read with a 403, while the identical
+  # code succeeds as a Job. It cannot simply reuse `ml-ns/training`: KFP's
+  # launcher also needs the RBAC that ships attached to `pipeline-runner`.
+  "ml-ns/pipeline-runner",
 ]

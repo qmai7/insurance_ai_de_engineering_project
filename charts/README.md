@@ -12,6 +12,7 @@ here. Each Compose service becomes a Deployment, StatefulSet, or Job.
 | `airflow-scheduler` | `airflow/` — Deployment, KubernetesExecutor | 2 |
 | `clickhouse` | `clickhouse/` — StatefulSet + PVC | 2 |
 | — (new in Part 2) | `mlflow/` — Deployment + Service in `ml-ns` | 6 |
+| — (new in Part 2) | `kubeflow/` — kustomize overlay, 12 Deployments in `ml-ns` | 6 |
 | `kafka` | not yet | 3 |
 | `flink-jobmanager`, `flink-taskmanager` | not yet | 3 |
 | `opensearch`, `datahub-*` | not yet | 4 |
@@ -39,7 +40,20 @@ helm upgrade --install airflow apache-airflow/airflow \
 
 # 4. MLflow — tracking server + model registry (step 6)
 helm upgrade --install mlflow charts/mlflow -n ml-ns --wait
+
+# 5. Kubeflow Pipelines — CRDs first, then the control plane (step 6)
+kubectl apply -k charts/kubeflow/cluster-scoped
+kubectl wait --for=condition=established --timeout=60s \
+  crd/workflows.argoproj.io crd/scheduledworkflows.kubeflow.org
+kubectl apply -k charts/kubeflow
 ```
+
+The two-phase KFP apply is not optional: the workflow-controller crashloops if
+`workflows.argoproj.io` is not established before it starts. `charts/kubeflow` is
+the one kustomize overlay among the Helm charts — KFP publishes no chart, and
+Argo CD reads kustomize natively, so §8 is unaffected. It carries seven patches
+against upstream; `charts/kubeflow/kustomization.yaml` explains each, and four of
+them are upstream bugs rather than customization.
 
 `bootstrap-secrets.sh` also creates `ml-ns`, the `mlflow` and `training`
 ServiceAccounts (annotated for Workload Identity from `terraform output`), and the
@@ -65,7 +79,15 @@ pointing at the cause.
 kubectl port-forward -n data-ns svc/airflow-webserver 8080:8080   # admin/admin
 kubectl port-forward -n data-ns svc/clickhouse 8123:8123
 kubectl port-forward -n ml-ns svc/mlflow 5000:5000                # MLflow UI
+kubectl port-forward -n ml-ns svc/ml-pipeline-ui 3000:80          # Kubeflow UI
+kubectl port-forward -n ml-ns svc/ml-pipeline 8888:8888           # KFP API
 ```
+
+The Kubeflow UI is reached by port-forward rather than the gateway on purpose:
+§10 puts nginx in front of Grafana, Loki, Tempo and `fraud-prediction-api`. The
+KFP control plane is an operator tool, not part of the serving surface, and
+exposing an unauthenticated pipeline API through the gateway would be a
+regression against §14.
 
 MLflow 3 validates the Host header against an allow-list (DNS-rebinding
 protection). `localhost` is included, so port-forwarding works; in-cluster DNS
@@ -81,6 +103,19 @@ kubectl logs -n ml-ns -l job-name=fraud-training -f
 
 The run registers a new `fraud-detector` version and tags it with the Delta
 `data_version` it read. It never promotes — see [`docs/ml.md`](../docs/ml.md).
+
+The Job is still the fastest way to run training alone. The same two steps as a
+Kubeflow pipeline, with the run visible in the UI:
+
+```bash
+kubectl port-forward -n ml-ns svc/ml-pipeline 8888:8888 &
+.venv-ml/bin/python -m ml.submit --wait
+```
+
+`ml/submit.py` recompiles `ml/pipeline.yaml` from `ml/pipeline.py` before
+submitting, so a run cannot execute a spec that has fallen behind its source, and
+groups runs under the `insurance-fraud` experiment — the same name as the MLflow
+experiment, so a KFP run and its MLflow run are findable from each other.
 
 ## Why these choices
 

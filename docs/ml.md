@@ -1,6 +1,6 @@
 # ML — baseline fraud model
 
-CLAUDE.md §4. The notebook is
+The notebook is
 [`notebooks/01_fraud_model_baseline.ipynb`](../notebooks/01_fraud_model_baseline.ipynb);
 environment setup is in [`notebooks/README.md`](../notebooks/README.md). This page
 records the decisions and the numbers, so neither has to be reverse-engineered from
@@ -34,8 +34,6 @@ gs://…/bronze/offline/claim_labels ─┤  label: is_fraud
 
 ### Features come from Feast, not from SQL
 
-The notebook could compute the aggregates itself in twenty lines. It doesn't,
-because then the model would be trained on features no serving path can reproduce.
 The registry, the offline paths and the TTLs are all read from the same
 `feature_store/` definition the Airflow Materialize Pipeline uses.
 
@@ -47,24 +45,19 @@ the *question* being asked of Feast, not an answer.
 
 A label is not a feature. It arrives later, from a different process, and anything
 placed in a feature view gets materialized into Redis where the prediction API
-would happily read it — target leakage with an ingestion pipeline attached. So
-`claim_labels` stays a separate table and is joined only here, in training.
+would happily read it. So `claim_labels` stays a separate table and is joined only here, in training.
 
-### The split is temporal
+### The split
 
 Cut at the 80th percentile of `claim_date` rather than at random:
 
 - production only ever scores the future; a random split lets the model learn from
   claims filed *after* the ones it is evaluated on
 - the generator's drift window is the last 14 days (§6), and a random split spreads
-  those rows across both halves — telling the model about the shift it is supposed
-  to be caught out by
-- the same customer files multiple claims, and `customer_90d` features are
-  correlated across them, so a random split puts one customer on both sides
+  those rows across both halves.
 
 The visible cost is that validation is harder than training by construction: the
-fraud rate is **4.63% in train and 11.00% in validation**. That gap is the injected
-drift, and it is the honest number to plan against.
+fraud rate is **4.63% in train and 11.00% in validation**.
 
 ### Two features dropped at model level
 
@@ -81,13 +74,11 @@ to reproduce an imputation strategy and a one-hot column order is train/serve sk
 waiting for a deploy. Nulls in `risk_segment` become their own `"unknown"` category
 rather than a filled-in guess — "we did not collect this" is information.
 
-### One model, deliberately
+### One model
 
 Logistic regression only. A boosted model was tried and scored within noise of it
 (PR-AUC 0.329 vs 0.358) on a 582-row validation set with 64 positives, which is not
 enough evidence to prefer either — so it was removed rather than kept as decoration.
-Boosting belongs in §5, where distributed XGBoost is an explicit requirement and
-where the comparison can be run repeatedly instead of once.
 
 The baseline mattering this much is itself informative: the generator's label *is* a
 logistic function of a handful of features, so the ceiling here is near-linear by
@@ -96,14 +87,13 @@ construction. Real fraud is not, which is why the tree still belongs in the pipe
 
 ## Results
 
-582-claim validation set, 64 fraud (11.0%). A random ranker scores PR-AUC 0.110.
+582-claim validation set, in which 64 claims are fraud (11.0%)
 
 **PR-AUC 0.358 · ROC-AUC 0.751**
 
 The operating point is a **review budget, not a probability threshold**. Nobody
 investigates every claim, so the question is what a team reviewing the top N% by
-risk actually sees. That also means the numbers survive the model being poorly
-calibrated — only the ordering has to be right.
+risk actually sees.
 
 | Review budget | Flagged | Fraud caught | Precision | Recall | Lift vs random |
 |---|---|---|---|---|---|
@@ -119,9 +109,7 @@ the ordering; the budget decides where to cut.
 
 **Accuracy is not reported, and precision is not accuracy.** A model that labels
 every claim "legit" scores **89.0%** accuracy on this validation set and catches
-zero fraud. Any metric a do-nothing model wins is not measuring the thing we care
-about, so the notebook prints that 89.0% explicitly, once, next to the real
-metrics — to make it unavailable as a result.
+zero fraud.
 
 Precision at a budget is the number that matters: at 10%, roughly **1 flagged claim
 in 3 is fraud, against 1 in 9 for random review**. The same investigator hours find
@@ -227,7 +215,7 @@ Deployed by [`charts/mlflow`](../charts/mlflow) into `ml-ns`, image
 
 ### Aliases, not stages
 
-CLAUDE.md §7 describes a `Production` *stage* pointer. **MLflow 3 removed model
+§7 describes a `Production` *stage* pointer. **MLflow 3 removed model
 stages**, so the pointer here is a registry **alias** named `production`. This is
 a better fit anyway: an alias moves between versions atomically, so serving never
 resolves to nothing mid-promotion, and a second alias is all §13's
@@ -289,14 +277,47 @@ same thing in every window.
 | | State |
 |---|---|
 | Pipeline compiles | yes — 2 tasks, correct dependency edge, correct image |
-| Both steps run correctly | yes — executed as Kubernetes Jobs with the exact commands and arguments the compiled spec issues |
+| Both steps run correctly | yes — as Kubernetes Jobs, and as a KFP run |
 | Gate blocks a bad model | yes — exit 0 at `min_lift=2.0` (3.25× actual), exit 1 at `min_lift=99` |
-| Submitted to a KFP control plane | **no — Kubeflow Pipelines is not deployed** |
+| Submitted to a KFP control plane | yes — KFP 2.17 in `ml-ns`, run `Succeeded`, registered `fraud-detector` v5 and passed the gate at 3.25× |
+| Run visible in the Kubeflow UI | yes — `kubectl port-forward -n ml-ns svc/ml-pipeline-ui 3000:80` |
 
-KFP standalone is ~12 pods and brings its own MySQL and MinIO, which collides with
-two locked decisions (GCS replaces MinIO; Postgres for metadata — KFP 2.x does not
-support Postgres). Deploying it was deferred rather than resolved, so the pipeline
-definition is real and its logic is proven, but the orchestrator has never run it.
+### Deploying the control plane
+
+[`charts/kubeflow/`](../charts/kubeflow) is a kustomize overlay on upstream's
+`platform-agnostic` env at 2.17.0 — 12 Deployments in `ml-ns`. It carries seven
+patch groups, and the split between them is the useful part: three are choices
+this project made, four are upstream defects. Each is argued in
+`charts/kubeflow/kustomization.yaml`; the summary:
+
+| Patch | Why |
+|---|---|
+| Generated secrets + MySQL root password | upstream ships `root` with *no* password and `minio`/`minio123` in committed manifests; `bootstrap-secrets.sh` generates both instead (§14) |
+| Resource requests, PVC sizes | Autopilot bills pod requests, and 7 containers ship with none — 3.5 vCPU and 14 GiB of billed idle, plus 40 GiB of disk that outlives a parked session |
+| `kubeflow-pipelines-public` RoleBinding narrowed | Autopilot's Warden rejects binding a Role to Group `system:authenticated`, and correctly |
+| Remove `cache-server` / `cache-deployer` | the deployer mints its TLS cert via a CSR with `O=system:nodes`; Autopilot's `autogke-csr-limitation` forbids node impersonation. Both are v1 components — v2 caching lives in the driver, so nothing is lost |
+| `OBJECTSTORECONFIG_HOST`, launcher `providers`, `metadata-writer` POD_NAMESPACE, Argo `artifactRepository` | four separate places where upstream hardcodes the string `kubeflow` as a namespace, in env values and ConfigMap bodies that kustomize's namespace transformer cannot reach |
+
+**MySQL, not Postgres — a deliberate deviation from CLAUDE.md.** The
+`platform-agnostic-postgresql` variant was tried first, because it matches the
+locked decision. Four manifest-level defects in, the API server reached
+`column "defaultexperimentid" does not exist (SQLSTATE 42703)`: KFP builds queries
+with squirrel using bare mixed-case identifiers while GORM creates those columns
+quoted. MySQL is case-insensitive and never noticed; Postgres folds the unquoted
+form to lower case. That is compiled into the binary, so no overlay reaches it.
+
+The deviation is narrower than it looks. The locked decision is about *our*
+metadata — Airflow's and MLflow's, still on `data-ns/postgres`. This database
+holds KFP's own run bookkeeping: control-plane state, regenerable, dead with the
+cluster. The same argument covers SeaweedFS (KFP's internal artifact store)
+against "GCS replaces MinIO" — Bronze/Silver/Gold are on GCS; this holds compiled
+pipeline packages.
+
+**Step pods run as `pipeline-runner`, not `training`.** That is a different KSA
+than the equivalent Kubernetes Job uses, so it needs its own Workload Identity
+binding — added to `terraform.tfvars` and annotated by `bootstrap-secrets.sh`.
+Without it the training step fails at the first Feast read with a 403 while the
+identical code succeeds as a Job.
 
 **No distributed training step.** §5 asks for one. The model is a logistic
 regression on 2,118 rows with nothing to distribute, and the gradient-boosted
@@ -307,7 +328,8 @@ not an oversight.
 
 | Next | Takes from here |
 |---|---|
-| §5 completion | deploy a KFP control plane and submit `ml/pipeline.yaml`; add distributed training if a model that needs it returns |
+| §5 remainder | the control plane is deployed and a run has gone green; what is still missing is a distributed training step, which needs a model that justifies one |
+| §12 retraining trigger | the drift DAG's last step calls `ml/submit.py`'s in-cluster path — `--host http://ml-pipeline.ml-ns.svc.cluster.local:8888` |
 | §1 `fraud-prediction-api` | `ml/config.py:MODEL_FEATURES` is the exact Redis read list; `aliased_model_location()` gives the model path; the logged signature is the request contract |
 | §8 KServe | resolve `@production` to a `gs://` path and point an `InferenceService` at it |
 | §9 validation | the four repositories are the seams to fake; the notebook's reload-and-compare check becomes the `hypothesis` idempotency test |
