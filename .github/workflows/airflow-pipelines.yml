@@ -3,9 +3,12 @@
 #
 # Four separate jobs, not one job with many steps: GitHub's UI renders one
 # node per job, so this is what makes lint/test/build/deploy show as a
-# pipeline graph instead of a single opaque box. lint and test run in
-# parallel (no dependency between them); build-and-push needs both to pass
-# first; update-manifest needs the image tag build-and-push produced.
+# pipeline graph instead of a single opaque box. Chained sequentially
+# (lint -> test -> build-and-push -> update-manifest) rather than running
+# lint/test in parallel: GitHub's graph view visually merges parallel jobs
+# that share a downstream dependency into one box, which reads as a single
+# stage even though they're still 2 distinct jobs in the sidebar list — a
+# straight chain is what actually renders as 4 separate connected boxes.
 #
 # Deliberately triggers only on dags/**, jobs/**, and the Dockerfile — never on
 # charts/airflow/values.yaml, which is the file update-manifest commits to.
@@ -56,6 +59,7 @@ jobs:
           ruff check jobs/ dags/
 
   test:
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +71,7 @@ jobs:
           pytest jobs/ dags/ -q || [ $? -eq 5 ]  # 5 = no tests collected yet
 
   build-and-push:
-    needs: [lint, test]
+    needs: test
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.build.outputs.tag }}
