@@ -1,8 +1,14 @@
 ##
-# Airflow pipelines CI — lint, (placeholder) test, build, push, redeploy-via-git.
+# Airflow pipelines CI — lint, (placeholder) test, build+push, bump chart tag.
+#
+# Four separate jobs, not one job with many steps: GitHub's UI renders one
+# node per job, so this is what makes lint/test/build/deploy show as a
+# pipeline graph instead of a single opaque box. lint and test run in
+# parallel (no dependency between them); build-and-push needs both to pass
+# first; update-manifest needs the image tag build-and-push produced.
 #
 # Deliberately triggers only on dags/**, jobs/**, and the Dockerfile — never on
-# charts/airflow/values.yaml, which is the file this workflow itself commits to.
+# charts/airflow/values.yaml, which is the file update-manifest commits to.
 # Triggering on that path too would be an infinite loop: commit -> workflow ->
 # commit -> workflow ...
 #
@@ -38,24 +44,35 @@ env:
   SERVICE_ACCOUNT: insurance-github-ci@aide-playground.iam.gserviceaccount.com
 
 jobs:
-  build-and-deploy:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Lint
-        run: |
+      - run: |
           pip install ruff
           ruff check jobs/ dags/
 
-      - name: Unit test
-        run: |
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
           pip install pytest
           pytest jobs/ dags/ -q || [ $? -eq 5 ]  # 5 = no tests collected yet
+
+  build-and-push:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
 
       - id: auth
         uses: google-github-actions/auth@v2
@@ -77,9 +94,15 @@ jobs:
           docker push "$IMAGE_URI"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
+  update-manifest:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Bump image tag in charts/airflow/values.yaml
         run: |
-          TAG="${{ steps.build.outputs.tag }}"
+          TAG="${{ needs.build-and-push.outputs.tag }}"
           sed -i "s/tag: \"[^\"]*\"/tag: \"${TAG}\"/g" charts/airflow/values.yaml
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
