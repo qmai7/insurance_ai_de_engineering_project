@@ -49,7 +49,7 @@ resource "google_artifact_registry_repository" "images" {
 resource "google_artifact_registry_repository_iam_member" "node_puller" {
   project    = var.project_id
   location   = google_artifact_registry_repository.images.location
-  repository = google_artifact_registry_repository.images.name
+  repository = google_artifact_registry_repository.images.repository_id
   role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:${data.google_project.this.number}-compute@developer.gserviceaccount.com"
 }

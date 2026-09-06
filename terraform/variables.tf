@@ -15,6 +15,11 @@ variable "name_prefix" {
   default     = "insurance"
 }
 
+variable "github_repository" {
+  description = "\"<owner>/<repo>\" — the only GitHub repo trusted by the Workload Identity Federation pool for CI image pushes (§8)."
+  type        = string
+}
+
 # ---------------------------------------------------------------------------
 # Networking
 # ---------------------------------------------------------------------------

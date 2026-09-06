@@ -46,3 +46,13 @@ output "docker_auth_command" {
   description = "Run once per machine before pushing images."
   value       = module.registry.docker_auth_command
 }
+
+output "github_actions_workload_identity_provider" {
+  description = "Set as the GH_WORKLOAD_IDENTITY_PROVIDER repo variable / google-github-actions/auth's workload_identity_provider input."
+  value       = module.ci.workload_identity_provider
+}
+
+output "github_actions_service_account" {
+  description = "Set as the GH_CI_SERVICE_ACCOUNT repo variable / google-github-actions/auth's service_account input."
+  value       = module.ci.service_account_email
+}

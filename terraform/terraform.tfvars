@@ -4,6 +4,9 @@
 project_id = "aide-playground"
 region     = "northamerica-northeast1"
 
+# The only repo the GitHub Actions Workload Identity Federation pool trusts.
+github_repository = "qmai7/insurance_ai_de_engineering_project"
+
 # Public nodes: no Cloud NAT charges. See variables.tf for the full rationale.
 enable_private_nodes = false
 

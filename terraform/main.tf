@@ -29,6 +29,8 @@ resource "google_project_service" "required" {
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "artifactregistry.googleapis.com",
+    # Token exchange for Workload Identity Federation (GitHub Actions -> GCP).
+    "sts.googleapis.com",
   ])
 
   project = var.project_id
@@ -108,4 +110,16 @@ module "iam" {
   # ("<project>.svc.id.goog") when the binding is created, and that pool does not
   # exist until a Workload-Identity-enabled cluster does.
   depends_on = [google_project_service.required, module.gke]
+}
+
+module "ci" {
+  source = "./modules/ci"
+
+  project_id             = var.project_id
+  name_prefix            = var.name_prefix
+  github_repository      = var.github_repository
+  registry_location      = module.registry.repository_location
+  registry_repository_id = module.registry.repository_id
+
+  depends_on = [google_project_service.required, module.registry]
 }

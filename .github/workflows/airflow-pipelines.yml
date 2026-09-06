@@ -1,0 +1,88 @@
+##
+# Airflow pipelines CI — lint, (placeholder) test, build, push, redeploy-via-git.
+#
+# Deliberately triggers only on dags/**, jobs/**, and the Dockerfile — never on
+# charts/airflow/values.yaml, which is the file this workflow itself commits to.
+# Triggering on that path too would be an infinite loop: commit -> workflow ->
+# commit -> workflow ...
+#
+# No unit tests exist yet (§9 is a separate, not-yet-built rubric item), so
+# `pytest` is wired in now and will simply report "no tests collected" until
+# real tests land — that exit code is treated as success rather than faked
+# with a placeholder test file.
+##
+name: Airflow pipelines
+
+on:
+  push:
+    branches: [main_empty]
+    paths:
+      - "dags/**"
+      - "jobs/**"
+      - "docker_image/dockerfile.airflow"
+      - ".github/workflows/airflow-pipelines.yml"
+
+permissions:
+  contents: write   # to commit the bumped image tag back
+  id-token: write    # to mint the OIDC token Workload Identity Federation exchanges
+
+env:
+  REGION: northamerica-northeast1
+  PROJECT_ID: aide-playground
+  REPOSITORY: insurance-images
+  IMAGE: airflow-spark
+  # Both values are safe to commit: WIF's attribute condition (terraform/modules/ci)
+  # already restricts who can assume this identity to workflows running in this
+  # exact repo, so neither string is a usable credential on its own.
+  WORKLOAD_IDENTITY_PROVIDER: projects/722739395224/locations/global/workloadIdentityPools/insurance-github/providers/github
+  SERVICE_ACCOUNT: insurance-github-ci@aide-playground.iam.gserviceaccount.com
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Lint
+        run: |
+          pip install ruff
+          ruff check jobs/ dags/
+
+      - name: Unit test
+        run: |
+          pip install pytest
+          pytest jobs/ dags/ -q || [ $? -eq 5 ]  # 5 = no tests collected yet
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push
+        id: build
+        run: |
+          TAG="${GITHUB_SHA::12}"
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${TAG}"
+          docker build -t "$IMAGE_URI" -f docker_image/dockerfile.airflow .
+          docker push "$IMAGE_URI"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Bump image tag in charts/airflow/values.yaml
+        run: |
+          TAG="${{ steps.build.outputs.tag }}"
+          sed -i "s/tag: \"[^\"]*\"/tag: \"${TAG}\"/g" charts/airflow/values.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add charts/airflow/values.yaml
+          git commit -m "ci: bump airflow-spark to ${TAG}" || exit 0
+          git push
