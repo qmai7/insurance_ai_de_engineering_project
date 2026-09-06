@@ -1,5 +1,6 @@
 """
-Canonical configuration for the training path.
+This script defines the canonical inputs for model training and evaluation. 
+
 
 This module is the single definition of *what the model is trained on*. The
 notebook (`notebooks/01_fraud_model_baseline.ipynb`) was the exploration that
@@ -17,24 +18,15 @@ from __future__ import annotations
 import os
 
 LAKEHOUSE = (os.getenv("LAKEHOUSE_ROOT") or "gs://aide-playground-lakehouse").rstrip("/")
-
-# The Feast repo definition (feature_store.yaml + features.py). Baked into the
-# training image so a run cannot pick up a stale definition, while the registry
-# it points at stays in GCS and is shared with the Materialize Pipeline.
 FEAST_REPO_PATH = os.getenv("FEAST_REPO_PATH", "/feature_store")
 
-# Labels live in Bronze, never in Gold or a feature view: a label arrives from a
-# different process than the features, and anything in a feature view is
-# materialized into Redis where the prediction API could read it.
+# The separation is intentional and important. 
+# A label is not treated as a feature. Thus, it should not be inadvertently materialized into Redis.
 LABEL_PATH = f"{LAKEHOUSE}/bronze/offline/claim_labels.parquet"
 
-# Entity spine: which claims exist, and when. Entity keys and a timestamp, not
-# features — this is the question put to Feast, not an answer from it.
 SPINE_PATH = f"{LAKEHOUSE}/feast/obt_claims_enriched"
 
-# The Delta copy of the same Gold table. Read only for its transaction-log
-# version, which is logged as an MLflow tag so a registered model names the exact
-# data snapshot it was trained on (§7).
+# the Delta table used for data-version tracking
 DELTA_TABLE_PATH = f"{LAKEHOUSE}/delta/gold/obt_claims_enriched"
 
 ENTITY_KEYS = ["claim_id", "customer_id"]
@@ -42,8 +34,7 @@ EVENT_TIMESTAMP = "event_timestamp"
 LABEL = "is_fraud"
 
 # ---------------------------------------------------------------------------
-# Feature references, by view. Requested from Feast as a point-in-time join at
-# each claim's own filing date.
+# Feature references
 # ---------------------------------------------------------------------------
 
 CLAIM_FEATURE_REFS = [
@@ -71,11 +62,11 @@ CUSTOMER_FEATURE_REFS = [
     "customer_90d:f_customer_payment_failure_rate_90d",
 ]
 
+# Exact Feast feature views
 FEATURE_REFS = CLAIM_FEATURE_REFS + CUSTOMER_FEATURE_REFS
 
 # ---------------------------------------------------------------------------
-# Model input. Retrieved != used: two retrieved features are deliberately not
-# fed to the estimator.
+# Model input
 # ---------------------------------------------------------------------------
 
 NUMERIC = [
@@ -122,7 +113,7 @@ SPLIT_QUANTILE = float(os.getenv("SPLIT_QUANTILE", "0.8"))
 
 # The operating point is a review capacity, not a probability. Nobody
 # investigates every claim, so the question is what a team reviewing the top N%
-# by risk sees — and a capacity survives the model being poorly calibrated.
+# by risk sees.
 REVIEW_BUDGET = float(os.getenv("REVIEW_BUDGET", "0.10"))
 BUDGET_CURVE = (0.05, 0.10, 0.20, 0.30)
 

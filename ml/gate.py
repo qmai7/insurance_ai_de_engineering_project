@@ -8,13 +8,9 @@ version, and this decides whether that version is worth a human looking at.
 
     python -m ml.gate --summary-uri gs://.../summary.json --min-pr-auc 0.20
 
-The floor is expressed relative to the base rate, not as an absolute number, and
-that distinction matters. Validation fraud prevalence moves with the generator's
-drift window, so a hardcoded PR-AUC threshold silently becomes stricter or looser
-as the data shifts. A *lift* requirement ("at least Nx better than random") means
-the same thing in every window.
 
-Deliberately not a promotion step. CLAUDE.md leaves promotion manual, so passing
+
+Deliberately not a promotion step. leaves promotion manual, so passing
 this gate makes a version eligible; `ml/promote.py` is still a separate, human
 act. When auto-promotion is built, this is where it hooks in.
 """
@@ -25,7 +21,15 @@ import argparse
 import json
 import sys
 
-
+"""
+the training step writes output such as: The training step writes output such as:
+- registered_model
+- version
+- data_version
+- pr_auc
+- roc_auc
+- baseline_pr_auc
+"""
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fail the pipeline on an inadequate model.")
     parser.add_argument("--summary-uri", required=True, help="JSON written by ml.train")
@@ -44,9 +48,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     summary = _read(args.summary_uri)
-
+    # How well the model ranks claims from most likely fraud to least likely fraud
     pr_auc = float(summary["pr_auc"])
+    # fraud base rate
     baseline = float(summary["baseline_pr_auc"])
+    # how much better the model is than random ordering
     lift = pr_auc / baseline if baseline else 0.0
 
     print(f"model        : {summary.get('registered_model')} v{summary.get('version')}")

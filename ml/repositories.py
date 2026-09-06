@@ -131,11 +131,7 @@ class DeltaLogDataVersionRepository:
     """
     The Delta table version, read from the transaction log.
 
-    Deliberately does not use Spark or `deltalake`. The version is the highest
-    numbered commit JSON in `_delta_log/`, which is a directory listing — pulling
-    in a Delta reader (and, for Spark, a JVM) to learn one integer would make the
-    training image far heavier than the model it builds.
-    """
+    The version is the highest numbered commit JSON in `_delta_log/`"""
 
     def __init__(self, table_path: str = config.DELTA_TABLE_PATH):
         self._table_path = table_path

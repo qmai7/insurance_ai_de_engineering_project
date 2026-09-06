@@ -24,6 +24,7 @@ and adds the ML side. The build order and design decisions live in
 | [`docs/feature_store.md`](docs/feature_store.md) | Feast on GCS Parquet + Redis; the Materialize Pipeline | done (Jobs 1 & 2 wait on Kafka/Flink) |
 | [`docs/ml.md`](docs/ml.md) | the fraud model end to end — Feast retrieval, temporal split, results, MLflow registry, training pipeline | done (see gaps below) |
 | [`notebooks/README.md`](notebooks/README.md) | the notebook's separate virtualenv, and why it has to be separate | done |
+| [`docs/cicd.md`](docs/cicd.md) | GitHub Actions + Argo CD — why GitOps, what's installed | in progress (Argo CD control plane only, no Applications yet) |
 
 MLflow is deployed in `ml-ns` with a Postgres backend and GCS artifacts, and
 `fraud-detector` is registered and promoted. The Kubeflow pipeline

@@ -104,13 +104,11 @@ Simulate data drift (configurable). Generate a label table: `claim_id`, `is_frau
 
 GitHub Actions build/test (unit test + lint)/push to **Google Artifact Registry**
 (`<region>-docker.pkg.dev/<project>/insurance-images`, provisioned by Terraform).
-GHCR was the original pick but was dropped: AR needs no PAT to push (Docker auths
+AR needs no PAT to push (Docker auths
 via gcloud) and no `imagePullSecret` to pull (the GKE node SA is granted
 `artifactregistry.reader` on the repo), so it removes two hand-managed
 credentials. ArgoCD app-of-apps syncs from `charts/`. Separate
-pipeline per: Materialize Pipeline, Training Pipeline, DP1/DP2/DP3 (Part 1's pipelines,
-redeployed to GKE), fraud-prediction-api, drift-api, Inference Engine (pulls the
-`Production`-tagged model), Job 1, Job 2. Pipeline-time secrets (GitHub Actions) stay
+pipeline per: Materialize Pipeline, Training Pipeline, Airflow pipelines, fraud-prediction-api (done in section 10), drift-api(done in section 10). Pipeline-time secrets (GitHub Actions) stay
 separate from runtime secrets (Vault).
 
 ## 9. Validation & Verification

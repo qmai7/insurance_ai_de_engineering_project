@@ -1,21 +1,15 @@
 """
-Compile and submit the Kubeflow training pipeline (§5).
+Compile and submit the Kubeflow training pipeline.
 
     kubectl port-forward -n ml-ns svc/ml-pipeline 8888:8888 &
     .venv-ml/bin/python -m ml.submit --wait
 
-Why a module rather than three lines in a doc: submitting is the step most likely
-to be run under time pressure, when a demo is being recorded or a run has just
-failed, and the three lines have two easy mistakes in them — forgetting to
-recompile after editing `ml/pipeline.py`, and submitting into the default
-experiment where the run is hard to find again. Both are handled here.
-
-The default host is localhost, not the in-cluster Service. KFP's API is not
-exposed outside the cluster (no ingress until §10, and the rubric's gateway work
-covers the prediction API, not the control plane), so a port-forward is the
-access path. Pass `--host http://ml-pipeline.ml-ns.svc.cluster.local:8888` when
-running from inside the cluster — an Airflow DAG triggering a retrain in §12 is
-the case that needs it.
+In short, this script automates this sequence
+    -> compile to pipeline.yaml
+    -> connect to Kubeflow
+    -> find/create experiment
+    -> submit run
+    -> optionally wait for success/failure
 """
 
 from __future__ import annotations
@@ -70,13 +64,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"compiled {PACKAGE}")
 
+    
     from kfp.client import Client
-
+    # Connect to Kubeflow
     client = Client(host=args.host)
 
-    # Reuse the experiment if it exists. Runs land in the same place as the
-    # MLflow experiment of the same name, so a KFP run and its MLflow run are
-    # findable from each other by name rather than by timestamp guessing.
+    # Find or create the experiment "insurance-fraud"
     try:
         experiment = client.get_experiment(experiment_name=args.experiment)
     except Exception:
@@ -84,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
             name=args.experiment,
             description="Kubeflow runs of the fraud-detector training pipeline (CLAUDE.md §5).",
         )
-
+    # Submit the pipeline run
     run = client.run_pipeline(
         experiment_id=experiment.experiment_id,
         job_name="fraud-model-training",
