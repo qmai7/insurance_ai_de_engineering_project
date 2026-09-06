@@ -31,3 +31,31 @@ server:
   # real protection — same tradeoff already made for the Kubeflow UI.
   extraArgs:
     - --insecure
+
+# GKE Autopilot's admission webhook injects fields no chart declares: resource
+# requests/limits (always ephemeral-storage, and cpu/memory too on any
+# container that left them unset) and an arch toleration
+# (kubernetes.io/arch=amd64:NoSchedule) on every Pod template. Argo CD's
+# desired manifest, rendered straight from the chart, never has these — so
+# without this, every Deployment/StatefulSet on this cluster shows a
+# permanent, meaningless OutOfSync diff. This is Autopilot-specific noise, not
+# drift worth tracking, so it's ignored cluster-wide rather than repeated in
+# every Application's ignoreDifferences.
+configs:
+  cm:
+    resource.customizations.ignoreDifferences.apps_Deployment: |
+      jqPathExpressions:
+        - '.spec.template.spec.containers[]?.resources'
+        - '.spec.template.spec.initContainers[]?.resources'
+        - '.spec.template.spec.tolerations'
+    resource.customizations.ignoreDifferences.apps_StatefulSet: |
+      jqPathExpressions:
+        - '.spec.template.spec.containers[]?.resources'
+        - '.spec.template.spec.initContainers[]?.resources'
+        - '.spec.template.spec.tolerations'
+    resource.customizations.ignoreDifferences.batch_Job: |
+      jqPathExpressions:
+        - '.spec.template.spec.containers[]?.resources'
+        - '.spec.template.spec.initContainers[]?.resources'
+        - '.spec.template.spec.tolerations'
+
