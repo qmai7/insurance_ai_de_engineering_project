@@ -33,6 +33,7 @@ REQUIRED = [
 def main() -> None:
     spark = lakehouse.create_spark_session("validate_bronze_inputs")
     print(f"storage: {lakehouse.describe_locations()}")
+    print("argo-cd-gitops-test: this line only exists after the new image deployed")
 
     missing = []
     for relative in REQUIRED:
