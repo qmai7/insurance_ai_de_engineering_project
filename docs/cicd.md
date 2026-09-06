@@ -37,11 +37,21 @@ both, and `redis` caches the rendered manifests so every diff doesn't mean
 re-running `helm template` from scratch. SSO (Dex) and sync notifications are
 disabled — neither has a purpose on a single-admin, no-alerting cluster.
 
-**App-of-apps** — one root `Application` points at `charts/` itself, and each
-subfolder (`postgres/`, `airflow/`, `mlflow/`, `redis/`, the `kubeflow/`
-kustomize overlay, later `argocd/` for Argo CD managing its own upgrade) becomes
-its own child `Application`, one per namespace. Adding a new service is adding
-a folder, not registering anything by hand.
+**App-of-apps** — one root `Application` points at `charts/argocd-apps/`, a
+folder of one `Application` manifest per service (`postgres`, `clickhouse`,
+`mlflow`, `redis`, `airflow`, later `kubeflow`). Each of those in turn points
+at the actual chart under `charts/<service>/`, or, for `airflow`, layers this
+repo's `values.yaml` on top of the upstream chart via a multi-source
+`Application`. Adding a new service is adding one manifest to
+`charts/argocd-apps/`, not registering anything by hand.
+
+ArgoCD dashboard
+![argocd_dashboard](/assets/argocd_dashboard.png)
+
+We can click on any of the child to see the live resource tree(Deployment, Service, etc..), diff against git. Example of **MLflow**:
+
+![argocd_mlflow](/assets/argocd_mlflow.png)
+
 
 **GitHub Actions pipelines** — one workflow per component (Materialize
 Pipeline, Training Pipeline, Airflow pipelines, and later
