@@ -29,6 +29,12 @@ spec:
   syncPolicy:
     automated:
       prune: true
-      selfHeal: true
+      # selfHeal off, deliberately: the chart's create-user/migrations Jobs set
+      # ttlSecondsAfterFinished: 300, so Kubernetes deletes them 5 minutes after
+      # they complete. With selfHeal on, Argo CD reads that as drift and
+      # recreates them — an infinite reappear/complete/expire loop. Without it,
+      # the app can sit OutOfSync on that one harmless diff; a real change (new
+      # image tag, values edit) still triggers a full sync as normal.
+      selfHeal: false
     syncOptions:
       - CreateNamespace=true
