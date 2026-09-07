@@ -21,6 +21,7 @@ and adds the ML side. The build order and design decisions live in
 |---|---|---|
 | [`terraform/README.md`](terraform/README.md) | GKE Autopilot, GCS, IAM/Workload Identity, Artifact Registry | done |
 | [`charts/README.md`](charts/README.md) | Airflow, Postgres, ClickHouse, Redis on GKE; parking the platform between sessions | done |
+| [`docs/helm.md`](docs/helm.md) | Helm/Kustomize chart layout, namespaces, secrets, identities and deployment flow | done |
 | [`docs/feature_store.md`](docs/feature_store.md) | Feast on GCS Parquet + Redis; the Materialize Pipeline | done (Jobs 1 & 2 wait on Kafka/Flink) |
 | [`docs/ml.md`](docs/ml.md) | the fraud model end to end — Feast retrieval, temporal split, results, MLflow registry, training pipeline | done (see gaps below) |
 | [`notebooks/README.md`](notebooks/README.md) | the notebook's separate virtualenv, and why it has to be separate | done |
