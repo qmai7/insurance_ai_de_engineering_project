@@ -70,7 +70,7 @@ deploymentSpec:
           value: gs://aide-playground-lakehouse
         - name: FEAST_REPO_PATH
           value: /feature_store
-        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.5
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
         resources:
           cpuLimit: 2.0
           cpuRequest: 1.0
@@ -90,7 +90,7 @@ deploymentSpec:
         - -c
         - python -m ml.train --step evaluate --split-uri "$0/$1/split.joblib" --model-uri
           "$0/$1/model.joblib" --evaluation-uri "$0/$1/evaluation.joblib"
-        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.5
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
         resources:
           cpuLimit: 1.0
           cpuRequest: 0.5
@@ -114,7 +114,7 @@ deploymentSpec:
         env:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow.ml-ns.svc.cluster.local:5000
-        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.5
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
         resources:
           cpuLimit: 1.0
           cpuRequest: 0.5
@@ -137,7 +137,7 @@ deploymentSpec:
         env:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow.ml-ns.svc.cluster.local:5000
-        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.5
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
         resources:
           cpuRequest: 0.2
           memoryRequest: 0.536870912
@@ -153,7 +153,7 @@ deploymentSpec:
         - -c
         - python -m ml.train --step split_by_time --dataset-uri "$0/$1/dataset.joblib"
           --split-uri "$0/$1/split.joblib"
-        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.5
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
         resources:
           cpuLimit: 2.0
           cpuRequest: 1.0
@@ -173,7 +173,7 @@ deploymentSpec:
         - -c
         - python -m ml.train --step train --split-uri "$0/$1/split.joblib" --model-uri
           "$0/$1/model.joblib"
-        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.5
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
         resources:
           cpuLimit: 2.0
           cpuRequest: 1.0
