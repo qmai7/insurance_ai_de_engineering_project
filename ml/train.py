@@ -236,7 +236,7 @@ def _save_artifact(uri: str, obj) -> None:
 def _load_artifact(uri: str):
     """Deserialize object from GCS or local path."""
     if not uri:
-        raise ValueError(f"artifact URI is required but not provided")
+        raise ValueError("artifact URI is required but not provided")
     import io
     if uri.startswith("gs://"):
         import gcsfs

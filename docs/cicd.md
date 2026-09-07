@@ -3,13 +3,74 @@
 GitHub Actions builds and pushes images; Argo CD is
 what actually gets a new image running in the cluster.
 
-## Why Argo CD
 
-- **No cluster credentials in CI.** GitHub Actions only ever needs Artifact
-  Registry push rights (via Workload Identity Federation — no static key sits
-  in a GitHub secret). It never holds a kubeconfig. Argo CD runs *inside* the
-  cluster and pulls from git, so the one credential that could do the most
-  damage (cluster-admin) never leaves the cluster.
+## 1.GitHub Actions pipelines
+
+Five workflows total, one per component — each triggers
+independently on the paths it owns, so touching one component never rebuilds
+another:
+
+| Workflow | Triggers on | Builds | Bumps |
+|---|---|---|---|
+| **Airflow pipelines** | `dags/insurance_batch_pipeline.py`, `jobs/**`, `docker_image/dockerfile.airflow` | `airflow-spark` image | `charts/airflow/values.yaml` |
+| Materialize Pipeline | `dags/feature_store_materialize.py`, `feature_store/**` | same `airflow-spark` image (Feast runs inside the Airflow image) | `charts/airflow/values.yaml` |
+| **Training Pipeline** | `ml/config.py`, `ml/gate.py`, `ml/promote.py`, `ml/repositories.py`, `ml/services.py`, `ml/submit.py`, `ml/train.py`, `ml/training-job.yaml`, `docker_image/dockerfile.training` | `training` image | `ml/pipeline.py`'s `TRAINING_IMAGE`, then recompiles `ml/pipeline.yaml` |
+| fraud-prediction-api | §10, not yet built | — | — |
+| drift-api | §10, not yet built | — | — |
+
+Two workflows are implemented so far —
+[`.github/workflows/airflow-pipelines.yml`](../.github/workflows/airflow-pipelines.yml)
+and
+[`.github/workflows/training-pipeline.yml`](../.github/workflows/training-pipeline.yml).
+Materialize Pipeline follows the identical shape as Airflow pipelines (same
+image, different trigger paths). Training Pipeline's `update-manifest` job
+differs from the other two: its deployment target isn't a standing Kubernetes
+resource Argo CD reconciles — a Kubeflow run is a one-shot API call, not a
+Deployment — so that job installs `kfp==2.17.0`, bumps `TRAINING_IMAGE` with
+`sed`, recompiles `ml/pipeline.yaml`, and commits both. Nobody automatically
+submits the recompiled pipeline; that's still a manual `ml/submit.py --wait`
+or the drift DAG in §12.
+
+Training Pipeline's trigger list spells out each `ml/` file explicitly rather
+than using `ml/**`, for the same loop-prevention reason `airflow-pipelines`
+excludes `charts/airflow/values.yaml`: `ml/pipeline.py` and `ml/pipeline.yaml`
+are exactly what `update-manifest` commits to, and GitHub Actions can't
+combine `paths:` and `paths-ignore:` on the same trigger, so the safe list is
+everything in `ml/` *except* those two.
+
+### Job structure
+
+![GithubAction_Airflow_pipeline](/assets/GithubAction_Airflow_pipeline.png)
+
+- **`lint`** — `ruff check jobs/ dags/`. Scoped to a narrow starter rule set
+  (`E4,E7,E9,F` in `pyproject.toml`) rather than ruff's full default: this
+  codebase was never linted before, and blocking CI on ~44 pre-existing style
+  issues unrelated to CI/CD wasn't the point of standing this up. Broaden the
+  rule set incrementally, later.
+- **`test`** — `pytest jobs/ dags/`. No unit tests exist yet (§9 is a
+  separate, not-yet-built rubric item), so this currently just confirms "no
+  tests collected" (exit code 5, treated as success) rather than faking a
+  placeholder test.
+- **`build-and-push`** — authenticates via Workload Identity Federation
+  (`google-github-actions/auth`, no static key), builds the image tagged with
+  the short commit SHA (commit identifier), pushes to Artifact Registry.
+  **but the cluster is still running the old img tag**. GKE has no idea the new image exists in the Artifact Registry. 
+  The only way to get GKE to pull and run new image is to change the tag in Git, which is what **`update-manifest`** does. 
+- **`update-manifest`** —  bumps the image tag in the relevant chart's
+  `values.yaml`, commits as `github-actions[bot]`, pushes. ArgoCD constantly watches and diff what's declared in `charts/airflow/values.yaml` vs what's actually running in the cluster, and reconciles any drift. This is the exact
+  commit Argo CD reacts to — CI's job ends here.
+
+
+**The loop end to end**: a push to `dags/` or `ml/` triggers its workflow →
+image is built and pushed to Artifact Registry → the workflow commits an
+updated image tag → Argo CD's `application-controller` notices the git change
+on its next poll → it renders the affected chart and applies the diff → the
+new pod pulls the image from Artifact Registry using the node service
+account's `artifactregistry.reader` grant (§8, no `imagePullSecret` needed).
+
+## 2.Argo CD
+
+### Why Argo CD?
 
 - **It's the missing link CI can't be.** A GitHub Actions workflow can build
   an image and commit a new tag into `charts/airflow/values.yaml`, but
@@ -21,13 +82,25 @@ what actually gets a new image running in the cluster.
   cluster state against `charts/` continuously and flags (or reverts) anything
   that drifted, so git stays the actual source of truth instead of slowly
   going stale.
+
+  Example: ArgoCD notices a drift in **Airflow** 
+
+![argocd_outofsync](/assets/argocd_outofsync.png)
+
 - **App-of-apps matches the repo layout that already exists.** `charts/` is
   already one subfolder per service (`postgres/`, `airflow/`, `mlflow/`,
   `redis/`, the `kubeflow/` kustomize overlay). A single root `Application`
   pointing at `charts/` can auto-discover each of those as its own child
   `Application`, so nothing about the existing folder structure has to change.
 
-## Key components
+
+### Key components
+
+**No cluster credentials in CI.** GitHub Actions only ever needs Artifact
+  Registry push rights (via Workload Identity Federation — no static key sits
+  in a GitHub secret). It never holds a kubeconfig. Argo CD runs *inside* the
+  cluster and pulls from git, so the one credential that could do the most
+  damage (cluster-admin) never leaves the cluster.
 
 **Argo CD control plane** (`argocd-ns`) — four pieces working together:
 `repo-server` renders each Helm chart / kustomize overlay in `charts/` into
@@ -51,86 +124,3 @@ ArgoCD dashboard
 We can click on any of the child to see the live resource tree(Deployment, Service, etc..), diff against git. Example of **MLflow**:
 
 ![argocd_mlflow](/assets/argocd_mlflow.png)
-
-
-**GitHub Actions pipelines** — one workflow per component. See below for how
-many, and the job structure each one follows.
-
-**The loop end to end**: a push to `dags/` or `ml/` triggers its workflow →
-image is built and pushed to Artifact Registry → the workflow commits an
-updated image tag → Argo CD's `application-controller` notices the git change
-on its next poll → it renders the affected chart and applies the diff → the
-new pod pulls the image from Artifact Registry using the node service
-account's `artifactregistry.reader` grant (§8, no `imagePullSecret` needed).
-
-## GitHub Actions pipelines
-
-Five workflows total, one per component (`CLAUDE.md` §3 and §8) — each triggers
-independently on the paths it owns, so touching one component never rebuilds
-another:
-
-| Workflow | Triggers on | Builds | Bumps |
-|---|---|---|---|
-| **Airflow pipelines** | `dags/insurance_batch_pipeline.py`, `jobs/**`, `docker_image/dockerfile.airflow` | `airflow-spark` image | `charts/airflow/values.yaml` |
-| Materialize Pipeline | `dags/feature_store_materialize.py`, `feature_store/**` | same `airflow-spark` image (Feast runs inside the Airflow image) | `charts/airflow/values.yaml` |
-| Training Pipeline | `ml/**` | `training` image | `ml/pipeline.py`'s `TRAINING_IMAGE`, then recompiles `ml/pipeline.yaml` |
-| fraud-prediction-api | §10, not yet built | — | — |
-| drift-api | §10, not yet built | — | — |
-
-Only **Airflow pipelines** is implemented so far —
-[`.github/workflows/airflow-pipelines.yml`](../.github/workflows/airflow-pipelines.yml).
-Materialize Pipeline follows the identical shape (same image, different
-trigger paths); Training Pipeline differs because its deployment target isn't
-a standing Kubernetes resource Argo CD reconciles — a Kubeflow run is a
-one-shot API call, not a Deployment — so that workflow's job ends at "image
-pushed, `pipeline.yaml` recompiled and committed," and someone (or the drift
-DAG in §12) still has to submit the run.
-
-### Job structure
-
-Four jobs, chained sequentially rather than run in parallel — GitHub's UI
-renders one node per job, but it visually merges jobs that have no `needs`
-between them into a single box once they converge on the same downstream
-job. A straight chain is what actually shows as four separate, connected
-boxes in the Actions graph:
-
-```text
-lint ──► test ──► build-and-push ──► update-manifest
-```
-
-- **`lint`** — `ruff check jobs/ dags/`. Scoped to a narrow starter rule set
-  (`E4,E7,E9,F` in `pyproject.toml`) rather than ruff's full default: this
-  codebase was never linted before, and blocking CI on ~44 pre-existing style
-  issues unrelated to CI/CD wasn't the point of standing this up. Broaden the
-  rule set incrementally, later.
-- **`test`** — `pytest jobs/ dags/`. No unit tests exist yet (§9 is a
-  separate, not-yet-built rubric item), so this currently just confirms "no
-  tests collected" (exit code 5, treated as success) rather than faking a
-  placeholder test.
-- **`build-and-push`** — authenticates via Workload Identity Federation
-  (`google-github-actions/auth`, no static key), builds the image tagged with
-  the short commit SHA, pushes to Artifact Registry.
-- **`update-manifest`** — bumps the image tag in the relevant chart's
-  `values.yaml`, commits as `github-actions[bot]`, pushes. This is the exact
-  commit Argo CD reacts to — CI's job ends here, it never touches the cluster.
-
-### Why the trigger paths matter
-
-Each workflow explicitly excludes the file it commits to. `airflow-pipelines`
-triggers on `dags/**`/`jobs/**`/the Dockerfile, but never on
-`charts/airflow/values.yaml` — since `update-manifest` commits to that exact
-path, including it in the trigger would be an infinite loop: commit → workflow
-→ commit → workflow.
-
-### Workload Identity Federation
-
-`terraform/modules/ci` provisions a WIF pool + provider trusting
-`token.actions.githubusercontent.com`, scoped with an `attribute_condition` so
-only workflow runs from this exact repo can mint a matching token — a
-workflow in some other repo in the same GitHub org can't impersonate this
-identity. That identity (`insurance-github-ci@...`) is granted
-`roles/artifactregistry.writer` on the one Artifact Registry repository only,
-not the project. No JSON key is ever created, downloaded, or stored as a
-GitHub secret; the provider name and service-account email are safe to commit
-in plaintext in the workflow file, since neither is usable without also
-controlling a run in this repo.
