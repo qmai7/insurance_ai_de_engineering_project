@@ -18,3 +18,24 @@ patches:
       kind: Namespace
       metadata:
         name: kserve
+  - target:
+      kind: CustomResourceDefinition
+      name: (inferenceservices|clusterservingruntimes|clusterstoragecontainers|inferencegraphs|localmodelcaches|localmodelnodes|localmodelnodegroups)\.serving\.kserve\.io
+    patch: |-
+      - op: replace
+        path: /metadata/annotations/cert-manager.io~1inject-ca-from
+        value: kserve-ns/serving-cert
+  - target:
+      kind: MutatingWebhookConfiguration
+      name: inferenceservice.serving.kserve.io
+    patch: |-
+      - op: replace
+        path: /metadata/annotations/cert-manager.io~1inject-ca-from
+        value: kserve-ns/serving-cert
+  - target:
+      kind: ValidatingWebhookConfiguration
+      name: (clusterservingruntime|inferencegraph|inferenceservice|localmodelcache|servingruntime|trainedmodel)\.serving\.kserve\.io
+    patch: |-
+      - op: replace
+        path: /metadata/annotations/cert-manager.io~1inject-ca-from
+        value: kserve-ns/serving-cert
