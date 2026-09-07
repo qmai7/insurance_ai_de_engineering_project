@@ -39,3 +39,31 @@ patches:
       - op: replace
         path: /metadata/annotations/cert-manager.io~1inject-ca-from
         value: kserve-ns/serving-cert
+  - target:
+      kind: Deployment
+      name: kserve-localmodel-controller-manager
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: kserve-localmodel-controller-manager
+  - target:
+      kind: DaemonSet
+      name: kserve-localmodelnode-agent
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: kserve-localmodelnode-agent
+  - target:
+      kind: Certificate
+      name: serving-cert
+    patch: |-
+      - op: replace
+        path: /spec/commonName
+        value: kserve-webhook-server-service.kserve-ns.svc
+      - op: replace
+        path: /spec/dnsNames/0
+        value: kserve-webhook-server-service.kserve-ns.svc
