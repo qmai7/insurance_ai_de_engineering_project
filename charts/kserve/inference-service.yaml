@@ -1,0 +1,25 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: fraud-detector
+  namespace: kserve-ns
+  annotations:
+    # Start with KServe's raw Deployment mode. Knative is deliberately not
+    # added in Section 1; autoscaling and gateway traffic policy come later.
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    serviceAccountName: kserve-model-serving
+    model:
+      modelFormat:
+        name: mlflow
+      storageUri: gs://aide-playground-lakehouse/mlflow/1/models/m-d56b220ff11742b3b7669477ffc8a61d/artifacts
+      protocolVersion: v2
+      runtime: kserve-mlserver
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: 1
+          memory: 2Gi

@@ -1,0 +1,29 @@
+image:
+  repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/fraud-prediction-api
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+serviceAccount:
+  create: false
+  name: fraud-prediction-api
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+model:
+  name: fraud-detector
+  version: production
+  threshold: "0.5"
+  kservePredictUrl: http://fraud-detector-predictor.kserve-ns.svc.cluster.local/v1/models/fraud-detector:predict
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

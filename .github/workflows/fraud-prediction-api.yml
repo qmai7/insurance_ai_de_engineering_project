@@ -1,0 +1,80 @@
+name: Fraud prediction API
+
+on:
+  push:
+    branches: [main_empty]
+    paths:
+      - "fraud_prediction_api/**"
+      - "docker_image/dockerfile.fraud_prediction_api"
+      - "charts/fraud-prediction-api/**"
+      - ".github/workflows/fraud-prediction-api.yml"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  REGION: northamerica-northeast1
+  PROJECT_ID: aide-playground
+  REPOSITORY: insurance-images
+  IMAGE: fraud-prediction-api
+  WORKLOAD_IDENTITY_PROVIDER: projects/722739395224/locations/global/workloadIdentityPools/insurance-github/providers/github
+  SERVICE_ACCOUNT: insurance-github-ci@aide-playground.iam.gserviceaccount.com
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check fraud_prediction_api/
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest httpx fastapi feast[redis,gcp]==0.65.0
+      - run: pytest tests/test_fraud_prediction_api.py -q || [ $? -eq 5 ]
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+      - id: build
+        run: |
+          TAG="${GITHUB_SHA::12}"
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${TAG}"
+          docker build -t "$IMAGE_URI" -f docker_image/dockerfile.fraud_prediction_api .
+          docker push "$IMAGE_URI"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  update-manifest:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump API image tag
+        run: |
+          TAG="${{ needs.build-and-push.outputs.tag }}"
+          sed -i "0,/tag: \"[^\"]*\"/s//tag: \"${TAG}\"/" charts/fraud-prediction-api/values.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add charts/fraud-prediction-api/values.yaml
+          git commit -m "ci: bump fraud-prediction-api to ${TAG}" || exit 0
+          git push

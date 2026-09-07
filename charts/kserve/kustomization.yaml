@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# KServe publishes versioned manifests rather than a Helm chart. Keep this
+# overlay pinned and put all namespaced KServe control-plane resources in the
+# project's locked kserve-ns namespace.
+namespace: kserve-ns
+
+resources:
+  - https://raw.githubusercontent.com/kserve/kserve/v0.15.2/install/v0.15.2/kserve.yaml
+  - https://raw.githubusercontent.com/kserve/kserve/v0.15.2/install/v0.15.2/kserve-cluster-resources.yaml
+  - inference-service.yaml
+
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: kserve
