@@ -1,15 +1,11 @@
 ##
 # Airflow pipelines CI — lint, (placeholder) test, build+push, bump chart tag.
 #
-# Four separate jobs, not one job with many steps: GitHub's UI renders one
+# Four separate jobs GitHub's UI renders one
 # node per job, so this is what makes lint/test/build/deploy show as a
 # pipeline graph instead of a single opaque box. Chained sequentially
-# (lint -> test -> build-and-push -> update-manifest) rather than running
-# lint/test in parallel: GitHub's graph view visually merges parallel jobs
-# that share a downstream dependency into one box, which reads as a single
-# stage even though they're still 2 distinct jobs in the sidebar list — a
-# straight chain is what actually renders as 4 separate connected boxes.
-#
+# lint -> test -> build-and-push -> update-manifest
+
 # Deliberately triggers only on dags/**, jobs/**, and the Dockerfile — never on
 # charts/airflow/values.yaml, which is the file update-manifest commits to.
 # Triggering on that path too would be an infinite loop: commit -> workflow ->
@@ -19,7 +15,8 @@
 # `pytest` is wired in now and will simply report "no tests collected" until
 # real tests land — that exit code is treated as success rather than faked
 # with a placeholder test file.
-##
+
+
 name: Airflow pipelines
 
 on:
@@ -32,8 +29,11 @@ on:
       - ".github/workflows/airflow-pipelines.yml"
 
 permissions:
-  contents: write   # to commit the bumped image tag back
-  id-token: write    # to mint the OIDC token Workload Identity Federation exchanges
+  contents: write   # `update-manifest` commits and pushes back to the repo
+  # this is needed for OIDC (OpenID Connect) which lets Github Actions mint a signed token proving "this run belongs to repo X, workflow Y".
+  # That token is exchanged for a GCP credential via Workload Identity Federation.(WIF)
+  # The credential obtained is used by `build-and-push` job to authenticate with GCP and push Docker images to Artifact Registry
+  id-token: write    
 
 env:
   REGION: northamerica-northeast1
@@ -70,6 +70,7 @@ jobs:
           pip install pytest
           pytest jobs/ dags/ -q || [ $? -eq 5 ]  # 5 = no tests collected yet
 
+  
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
@@ -77,7 +78,7 @@ jobs:
       tag: ${{ steps.build.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-
+      # 1. Authenticates to GCP via google-github-actions/auth@v2 using WIF (the OIDC exchange happens here).
       - id: auth
         uses: google-github-actions/auth@v2
         with:
@@ -85,15 +86,20 @@ jobs:
           service_account: ${{ env.SERVICE_ACCOUNT }}
 
       - uses: google-github-actions/setup-gcloud@v2
-
+      # 2. Configures Docker to authenticate against Artifact Registry in northamerica-northeast1.
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
       - name: Build and push
         id: build
+        # 3. Builds the image from docker_image/dockerfile.airflow.
+        # 4. Tags it with the first 12 characters of the commit SHA (${GITHUB_SHA::12}) — a short, unique, traceable tag tied directly to the commit that produced it. This is a common and good pattern (better than latest, which is not reproducible/pin-able).
+        # 5. Pushes the image.
+        # 6. Writes the tag to $GITHUB_OUTPUT so the next job can reference it via needs.build-and-push.outputs.tag.
         run: |
           TAG="${GITHUB_SHA::12}"
           IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${TAG}"
+          
           docker build -t "$IMAGE_URI" -f docker_image/dockerfile.airflow .
           docker push "$IMAGE_URI"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"

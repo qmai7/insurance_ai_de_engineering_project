@@ -1,0 +1,80 @@
+{{/*
+One Deployment per enabled role, from one definition. A copy-pasted second
+Deployment is how champion and challenger drift apart in probe settings or
+resources — and then a §13 comparison is measuring the difference between two
+deployments rather than between two models.
+*/}}
+{{- range $role := list "champion" "challenger" }}
+{{- $cfg := index $.Values $role }}
+{{- if $cfg.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "model-server.name" $ }}-{{ $role }}
+  labels:
+    {{- include "model-server.labels" $ | nindent 4 }}
+    version: {{ $role }}
+spec:
+  replicas: {{ $cfg.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "model-server.selectorLabels" $ | nindent 6 }}
+      version: {{ $role }}
+  template:
+    metadata:
+      labels:
+        {{- include "model-server.labels" $ | nindent 8 }}
+        # The subset key. The DestinationRule names subsets by this label, so
+        # it must be on the *pod*, not only on the Deployment.
+        version: {{ $role }}
+      annotations:
+        # Cloud Service Mesh injects the Envoy sidecar from this label on the
+        # namespace, but the annotation makes the intent explicit per workload
+        # and is what to flip when debugging whether a problem is the mesh.
+        sidecar.istio.io/inject: "true"
+    spec:
+      serviceAccountName: {{ $.Values.serviceAccount.name }}
+      containers:
+        - name: model-server
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: MODEL_NAME
+              value: {{ $.Values.model.name | quote }}
+            # role is what metrics group by; alias is what this pod loads.
+            # Separate so a rollback drill can run two versions of the same
+            # alias against each other.
+            - name: MODEL_ROLE
+              value: {{ $role | quote }}
+            - name: MODEL_ALIAS
+              value: {{ $cfg.alias | quote }}
+            - name: MLFLOW_TRACKING_URI
+              value: {{ $.Values.mlflow.trackingUri | quote }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            # The model download and deserialise happen during startup, so the
+            # first probe must not fire until they plausibly could have
+            # finished — otherwise the pod is marked unready, restarted, and
+            # never gets far enough to load.
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              # /healthz, not /readyz, on purpose: liveness must not depend on
+              # the model. A missing alias is not fixed by a restart, and
+              # probing readiness here would turn it into a crash loop.
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+{{ toYaml $.Values.resources | indent 12 }}
+{{- end }}
+{{- end }}

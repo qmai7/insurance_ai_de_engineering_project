@@ -14,7 +14,7 @@ ENV PYTHONUNBUFFERED=1 \
 # feast[gcp] for offline retrieval over gs://, mlflow for tracking and the
 # registry, google-cloud-storage because artifact upload goes straight to the
 # bucket (the tracking server runs with --no-serve-artifacts so that a model's
-# URI is a real gs:// path KServe can fetch).
+# URI is a real gs:// path model-server can fetch).
 #
 # Versions pinned to match what writes the things this image reads: feast to
 # dockerfile.feast (the registry's entity-key serialization is part of the

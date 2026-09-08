@@ -26,6 +26,8 @@ and adds the ML side. The build order and design decisions live in
 | [`docs/ml.md`](docs/ml.md) | the fraud model end to end — Feast retrieval, temporal split, results, MLflow registry, training pipeline | done (see gaps below) |
 | [`notebooks/README.md`](notebooks/README.md) | the notebook's separate virtualenv, and why it has to be separate | done |
 | [`docs/cicd.md`](docs/cicd.md) | GitHub Actions + Argo CD — why GitOps, what's installed | in progress (Argo CD control plane only, no Applications yet) |
+| [`docs/api.md`](docs/api.md) | `fraud-prediction-api` + `model-server` — request path, contracts, health checks, layering, testing | in progress (no gateway, KEDA or metrics; `drift-api` not built) |
+| [`docs/service_mesh.md`](docs/service_mesh.md) | Managed Cloud Service Mesh, mTLS, and the champion/challenger traffic split | in progress (implemented and rendering; not yet applied to a live cluster) |
 
 MLflow is deployed in `ml-ns` with a Postgres backend and GCS artifacts, and
 `fraud-detector` is registered and promoted. The Kubeflow pipeline
@@ -33,8 +35,17 @@ MLflow is deployed in `ml-ns` with a Postgres backend and GCS artifacts, and
 Jobs, but the KFP control plane is not deployed and there is no distributed
 training step — both gaps are stated in [`docs/ml.md`](docs/ml.md#what-is-verified-and-what-is-not).
 
-Not yet migrated: Kafka/Flink streaming, DataHub, and the serving layer (the
-prediction and drift APIs, KServe, gateway, observability, A/B).
+The serving layer is written but not yet verified on a cluster:
+`fraud-prediction-api` and `model-server` are built and unit-tested, and the
+champion/challenger split (Managed Cloud Service Mesh `DestinationRule` +
+`VirtualService`) renders and is weight-guarded — but none of it has been
+applied to a live mesh. Managed Cloud Service Mesh itself *is* enabled and
+injecting sidecars, but it was enabled by hand and is not yet in Terraform
+state. See [`docs/api.md`](docs/api.md#9-what-is-not-built-yet) and
+[`docs/service_mesh.md`](docs/service_mesh.md#7-what-is-not-built-yet).
+
+Not yet migrated or built: Kafka/Flink streaming, DataHub, `drift-api`,
+gateway, observability, and the A/B dashboards.
 
 ---
 ## Table of contents

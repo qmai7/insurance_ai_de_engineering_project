@@ -15,6 +15,9 @@ class PredictionResponse(BaseModel):
     is_fraud: bool
     threshold: float = Field(ge=0.0, le=1.0)
     model_name: str
+    # Which side of the §13 split answered, reported by the model-server rather
+    # than assumed by the API.
+    model_role: str
     model_version: str
     request_id: str
 

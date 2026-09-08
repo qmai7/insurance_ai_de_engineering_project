@@ -28,8 +28,8 @@ workload_identity_bindings = [
   # code succeeds as a Job. It cannot simply reuse `ml-ns/training`: KFP's
   # launcher also needs the RBAC that ships attached to `pipeline-runner`.
   "ml-ns/pipeline-runner",
-  # The API reads the shared Feast registry from GCS; the KServe predictor
+  # The API reads the shared Feast registry from GCS; the model-server
   # downloads the promoted MLflow model artifact from the same bucket.
   "api-serving-ns/fraud-prediction-api",
-  "kserve-ns/kserve-model-serving",
+  "api-serving-ns/model-server",
 ]

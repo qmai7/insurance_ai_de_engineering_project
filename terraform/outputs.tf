@@ -56,3 +56,13 @@ output "github_actions_service_account" {
   description = "Set as the GH_CI_SERVICE_ACCOUNT repo variable / google-github-actions/auth's service_account input."
   value       = module.ci.service_account_email
 }
+
+output "mesh_membership_id" {
+  description = "Fleet membership carrying the servicemesh feature, or null when the mesh is disabled."
+  value       = module.mesh.membership_id
+}
+
+output "mesh_namespace_label_command" {
+  description = "Run after the cluster is up: sidecar injection is a per-namespace Kubernetes label, not a Terraform resource. See modules/mesh/outputs.tf."
+  value       = module.mesh.namespace_label_command
+}

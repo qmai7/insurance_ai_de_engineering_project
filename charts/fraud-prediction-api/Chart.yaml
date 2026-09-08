@@ -1,6 +1,6 @@
 apiVersion: v2
 name: fraud-prediction-api
-description: Async API that reads Feast online features and calls KServe.
+description: Async API that reads Feast online features and calls model-server.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

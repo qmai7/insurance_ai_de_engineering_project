@@ -16,7 +16,6 @@ set -euo pipefail
 NS="${1:-data-ns}"
 ML_NS="${2:-ml-ns}"
 API_NS="api-serving-ns"
-KSERVE_NS="kserve-ns"
 
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
@@ -80,7 +79,6 @@ kubectl get secrets -n "$NS" \
 echo
 kubectl create namespace "$ML_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl create namespace "$API_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl create namespace "$KSERVE_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 GSA=$(terraform -chdir="$(dirname "$0")/../terraform" output -raw data_platform_service_account 2>/dev/null || true)
 if [[ -z "$GSA" ]]; then
@@ -106,9 +104,12 @@ for KSA in mlflow training pipeline-runner; do
   echo "$ML_NS/$KSA: ServiceAccount ready${GSA:+ (impersonates $GSA)}"
 done
 
-# Serving identities: the API reads the Feast registry, and KServe reads the
-# promoted model artifact. Both use the same bucket-scoped GSA without a key.
-for SERVING_IDENTITY in "$API_NS/fraud-prediction-api" "$KSERVE_NS/kserve-model-serving"; do
+# Serving identities, both in api-serving-ns: the API reads the Feast registry,
+# and the model-server downloads the promoted MLflow artifact. Two KSAs rather
+# than one because they are different workloads with different reasons to reach
+# the bucket — a later least-privilege split is then a config change. Both
+# impersonate the same bucket-scoped GSA today, and neither holds a key.
+for SERVING_IDENTITY in "$API_NS/fraud-prediction-api" "$API_NS/model-server"; do
   SERVING_NAMESPACE="${SERVING_IDENTITY%%/*}"
   SERVING_KSA="${SERVING_IDENTITY##*/}"
   kubectl create serviceaccount "$SERVING_KSA" -n "$SERVING_NAMESPACE" \

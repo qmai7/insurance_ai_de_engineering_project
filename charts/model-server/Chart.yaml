@@ -1,0 +1,9 @@
+apiVersion: v2
+name: model-server
+description: >-
+  Loads the promoted MLflow model from GCS and scores rows. Rendered twice —
+  champion and challenger — behind one Service, with the traffic split between
+  them owned by the mesh (§13).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

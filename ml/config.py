@@ -131,3 +131,10 @@ REGISTERED_MODEL = os.getenv("MLFLOW_REGISTERED_MODEL", "fraud-detector")
 # alias. Moving an alias between versions is atomic, which is what makes it the
 # right primitive for §13's champion/challenger promotion as well.
 PRODUCTION_ALIAS = os.getenv("MLFLOW_PRODUCTION_ALIAS", "production")
+
+# §13's second pointer. A challenger model-server pod resolves this alias
+# instead of `production`, so which model is under test is a registry decision
+# rather than a redeployment — and the traffic weight it receives is a separate,
+# mesh-level decision. Nothing breaks when it is unset: a challenger Deployment
+# simply has nothing to load, and no traffic is pointed at it until it is ready.
+CHALLENGER_ALIAS = os.getenv("MLFLOW_CHALLENGER_ALIAS", "challenger")

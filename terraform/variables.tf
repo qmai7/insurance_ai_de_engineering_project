@@ -112,3 +112,42 @@ variable "workload_identity_bindings" {
     "data-ns/spark",
   ]
 }
+
+# ---------------------------------------------------------------------------
+# Service mesh
+# ---------------------------------------------------------------------------
+
+variable "enable_service_mesh" {
+  description = <<-EOT
+    Register the cluster in the fleet and turn on Managed Cloud Service Mesh.
+
+    A switch, not an unconditional resource, for a cost reason specific to this
+    cluster: sidecar injection adds an Envoy container to every pod in a
+    labelled namespace, and Autopilot bills per pod's requests. Work on the
+    batch or streaming steps (§18 steps 2-4) needs no mesh, so leaving this
+    false keeps those sessions cheaper.
+
+    Turning it off does not break anything that was deployed with it on: the
+    mesh CRDs go away with the feature, and charts/model-server gates its
+    DestinationRule/VirtualService behind `mesh.enabled` for exactly that case.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "existing_fleet_membership_id" {
+  description = <<-EOT
+    Set when the cluster is already a fleet member and that membership is not
+    in Terraform state — which is the situation on this project: `insurance-gke`
+    was registered by hand (or by enabling the mesh in the console) before the
+    mesh module existed.
+
+    Leaving this null while a membership exists makes `terraform apply` attempt
+    a second membership for the same cluster. Import the real one and set this
+    back to null when convenient; until then the feature attaches to it and
+    `terraform destroy` leaves the fleet registration behind, which is the one
+    §11 exception currently in effect.
+  EOT
+  type        = string
+  default     = null
+}

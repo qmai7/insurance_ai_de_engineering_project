@@ -5,9 +5,13 @@ on:
     branches: [main_empty]
     paths:
       - "fraud_prediction_api/**"
+      - "tests/test_fraud_prediction_api.py"
       - "docker_image/dockerfile.fraud_prediction_api"
-      - "charts/fraud-prediction-api/**"
       - ".github/workflows/fraud-prediction-api.yml"
+      # charts/fraud-prediction-api/** is deliberately absent: update-manifest
+      # commits to values.yaml in that directory, so listing it would make this
+      # workflow trigger itself. Same loop-prevention reason as the ml/ trigger
+      # list in training-pipeline.yml.
 
 permissions:
   contents: write
@@ -40,8 +44,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install pytest httpx fastapi feast[redis,gcp]==0.65.0
-      - run: pytest tests/test_fraud_prediction_api.py -q || [ $? -eq 5 ]
+      # pytest-asyncio is not optional: the ModelServerClient tests carry
+      # @pytest.mark.asyncio and pytest silently skips them without it, so the
+      # job would pass while testing nothing.
+      - run: pip install pytest pytest-asyncio httpx fastapi feast[redis,gcp]==0.65.0
+      # No `|| [ $? -eq 5 ]` any more — there are real tests here now, so
+      # "no tests collected" is a failure to hear about, not a state to
+      # tolerate.
+      - run: pytest tests/test_fraud_prediction_api.py -q
 
   build-and-push:
     needs: test

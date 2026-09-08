@@ -112,6 +112,25 @@ module "iam" {
   depends_on = [google_project_service.required, module.gke]
 }
 
+module "mesh" {
+  source = "./modules/mesh"
+
+  project_id       = var.project_id
+  cluster_name     = module.gke.cluster_name
+  cluster_location = module.gke.cluster_location
+  enabled          = var.enable_service_mesh
+
+  # The cluster was registered in the fleet by hand before this module existed,
+  # so the membership is real but absent from state. Attach the feature to it
+  # rather than creating a duplicate. Set back to null once it is imported —
+  # see modules/mesh/variables.tf.
+  existing_membership_id = var.existing_fleet_membership_id
+
+  # The cluster must exist before it can be registered in the fleet — the
+  # membership's resource_link is validated at create time.
+  depends_on = [module.gke]
+}
+
 module "ci" {
   source = "./modules/ci"
 

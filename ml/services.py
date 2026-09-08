@@ -435,7 +435,7 @@ class ModelRegistryService:
                 # to `serialization_format="pickle"`: MLflow refuses to *load* a
                 # pickled model unless MLFLOW_ALLOW_PICKLE_DESERIALIZATION is set
                 # in the reader's environment, which would push a security opt-out
-                # onto every consumer of this model — including KServe in §8.
+                # onto every consumer of this model — including model-server in §13.
                 #
                 # numpy.dtype is a type descriptor, not executable state, and the
                 # list is persisted into the MLmodel flavor config, so readers
@@ -456,12 +456,12 @@ class ModelRegistryService:
 
     def aliased_model_location(self, alias: str = config.PRODUCTION_ALIAS) -> str | None:
         """
-        The real `gs://` path of the aliased version — what KServe fetches (§7).
+        The real `gs://` path of the aliased version — what model-server fetches (§7).
 
         Two indirections, neither obvious:
 
         1. A ModelVersion's `source` in MLflow 3 is `models:/<logged-model-id>`,
-           not a storage path. Handing that to KServe would give it nothing to
+           not a storage path. Handing that to model-server would give it nothing to
            download.
         2. The id has to be parsed out of `source`, because the registry response
            leaves `ModelVersion.model_id` unset — reading that attribute returns

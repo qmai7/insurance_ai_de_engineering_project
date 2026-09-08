@@ -44,10 +44,10 @@ backend:
 # Artifact store — the trained model files themselves.
 #
 # A real `gs://` root, with artifact *proxying disabled*, so a logged model's URI
-# is a genuine GCS path. This is not a preference: §7 has KServe resolve the
+# is a genuine GCS path. This is not a preference: §7 has model-server resolve the
 # registry's alias to a model URI and pull it directly from GCS. With proxying on,
 # MLflow would record `mlflow-artifacts:/...` URIs that only the tracking server
-# can resolve, and KServe would have nothing to fetch.
+# can resolve, and model-server would have nothing to fetch.
 #
 # The cost is that clients upload to GCS themselves and therefore need bucket
 # access — which is why ml-ns/training has a Workload Identity binding too.

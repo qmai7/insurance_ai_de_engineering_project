@@ -97,7 +97,7 @@ spec:
             - "--workers={{ .Values.server.workers }}"
             - "--allowed-hosts={{ join "," $hosts }}"
             {{- if not .Values.artifacts.serve }}
-            # Artifact URIs stay real gs:// paths so KServe can fetch a model
+            # Artifact URIs stay real gs:// paths so model-server can fetch a model
             # without going through this server. See values.yaml.
             - "--no-serve-artifacts"
             {{- end }}

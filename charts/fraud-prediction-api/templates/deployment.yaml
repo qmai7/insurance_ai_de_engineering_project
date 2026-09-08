@@ -13,6 +13,11 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: fraud-prediction-api
+      annotations:
+        # The API is the client side of the model-server's STRICT mTLS policy,
+        # so it needs a sidecar to hold a workload identity — without one,
+        # every prediction fails the handshake, not the request.
+        sidecar.istio.io/inject: {{ .Values.mesh.enabled | quote }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       containers:
@@ -29,8 +34,10 @@ spec:
               value: {{ .Values.model.version | quote }}
             - name: FRAUD_THRESHOLD
               value: {{ .Values.model.threshold | quote }}
-            - name: KSERVE_PREDICT_URL
-              value: {{ .Values.model.kservePredictUrl | quote }}
+            - name: MODEL_SERVER_PREDICT_URL
+              value: {{ .Values.model.predictUrl | quote }}
+            - name: MODEL_SERVER_TIMEOUT_SECONDS
+              value: {{ .Values.model.timeoutSeconds | quote }}
             - name: FEAST_REPO_PATH
               value: /feature_store
           readinessProbe:

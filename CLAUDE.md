@@ -22,14 +22,16 @@
 | Decision | Why |
 |---|---|
 | Single ephemeral **GKE Autopilot** cluster, one cluster, namespace-scoped | short bursty sessions suit per-pod billing; a 2nd cluster/control-plane buys no isolation a namespace doesn't already give |
-| Namespaces: `data-ns` (Airflow, Kafka, Flink, ClickHouse, DataHub, Postgres), `ml-ns` (MLflow, Kubeflow), `api-serving-ns` (FastAPI fraud-prediction-api, drift-api, **Redis**), `kserve-ns` (KServe InferenceServices), `istio-system` (mesh control plane), `gateway-ns` (nginx ingress, cert-manager), `argocd-ns` (Argo CD), `vault-ns`(HashiCorp Vault), `monitoring-ns` (Grafana,Promethus,Tempo,Loki) | maps cleanly to rubric categories; keeps CI/CD and ArgoCD apps scoped per concern |
+| Namespaces: `data-ns` (Airflow, Kafka, Flink, ClickHouse, DataHub, Postgres), `ml-ns` (MLflow, Kubeflow), `api-serving-ns` (FastAPI fraud-prediction-api, drift-api, model-server, **Redis**), `gateway-ns` (nginx ingress, cert-manager), `argocd-ns` (Argo CD), `vault-ns`(HashiCorp Vault), `monitoring-ns` (Grafana,Promethus,Tempo,Loki) | maps cleanly to rubric categories; keeps CI/CD and ArgoCD apps scoped per concern |
 | **GCS** replaces MinIO for Bronze/Silver/Gold | one less stateful service; native Spark/Flink/Feast connectors via Workload Identity |
-| **KServe + Istio** (not Kourier) | Istio VirtualService/DestinationRule = real canary traffic-splitting; Istio mTLS also covers the separate Security rubric item |
+| **KServe dropped.** A plain FastAPI `model-server` Deployment loads the promoted MLflow artifact from GCS and scores rows; fraud-prediction-api calls it over KServe's v1 wire protocol | KServe's CRDs, webhooks and cert-manager CA injection fought GKE Autopilot for no rubric credit — the split it was there to enable is a mesh feature, not a KServe one. Keeping its wire format means a real inference server can be substituted without a client rewrite |
+| **Managed Cloud Service Mesh** (GKE's managed Istio; no self-hosted istiod, so no `istio-system` chart) | `VirtualService`/`DestinationRule` = real canary traffic-splitting; `PeerAuthentication` mTLS also covers the separate Security rubric item. Managed because there is no control plane to version, resource-request or upgrade — a win on Autopilot specifically |
+| Champion/challenger are **two Deployments of `model-server` behind one Service**, differing only in `MODEL_ALIAS` | traffic is split between *models*, not between copies of the API; a ramp step is a weights commit Argo CD reconciles, with no rebuild and no pod restart |
 | Redis lives in `api-serving-ns` | colocated with the service that reads it synchronously on the hot path |
 | Postgres (Airflow + MLflow metadata): in-cluster StatefulSet, not Cloud SQL | free, torn down with the cluster; metadata is regenerable per session |
 | ClickHouse stays the Gold analytics warehouse; a Spark job exports Gold → GCS Parquet as the Feast offline source | avoids the unstable community ClickHouse-Feast connector |
 | Data-pulling/prediction API is called **`fraud-prediction-api`** | it returns a prediction, not raw features |
-| `drift-api`: plain FastAPI Deployment, no KServe/KNative | same rubric line satisfied, simpler shape |
+| `drift-api`: plain FastAPI Deployment, no KNative | same rubric line satisfied, simpler shape |
 | Feature-store has **3 separate CI/CD'd jobs** — don't collapse them (see Section 3) | Materialize Pipeline (batch, offline→online) ≠ Job 1 (streaming→offline) ≠ Job 2 (streaming→online) |
 | Data versioning: **Delta snapshots**, see Section 7 | reuses Silver's existing Delta infra, no new tool |
 | Terraform provisions everything (cluster, GCS, IAM) | `terraform destroy` leaves zero orphaned billing |
@@ -40,9 +42,9 @@
 
 ---
 
-## 1. Web API kéo dữ liệu — `fraud-prediction-api`
+## 1. Web API kéo dữ liệu — `fraud-prediction-api` (in `api-serving-ns`)
 
-Pulls features from Redis by ID, forwards to KServe for scoring, returns the result.
+Pulls features from Redis by ID, forwards to `model-server` for scoring, returns the result.
 Pydantic validation, `/healthz`+`/readyz`, fully async, Helm `--atomic` rollout with a
 captured rollback demo, behind the gateway (basic auth + rate limit + HTTPS/domain),
 KEDA autoscale on request rate.
@@ -87,7 +89,7 @@ Simulate data drift (configurable). Generate a label table: `claim_id`, `is_frau
 ## 7. Versioning
 
 - **Model**: MLflow registry — Postgres for run metadata, GCS for artifacts. The registry's
-  `Production` pointer is what KServe reads to pull the model's GCS URI at serving time.
+  `Production` pointer is what `model-server` reads to pull the model's GCS URI at serving time.
 - **Data — easiest option, no new tool**: the Gold→GCS export writes a **Delta table**
   instead of plain Parquet. Delta already versions every write automatically via its
   transaction log — nothing extra to build. To version a training pull, just read a specific
@@ -121,8 +123,9 @@ fraud-prediction-api, HTML report as the SLA artifact.
 
 ## 10. Routing & Gateway
 
-nginx ingress in front of: Grafana, Loki, Tempo, fraud-prediction-api. Basic auth + rate
-limit + real domain/HTTPS specifically on fraud-prediction-api.
+- nginx ingress + cert-manager in "gateway-ns" in front of: Grafana, Loki, Tempo (in section 12)
+
+- Basic auth + rate limit + real domain/HTTPS specifically on fraud-prediction-api.
 
 ## 11. IaC
 
@@ -131,7 +134,7 @@ Terraform only (Ansible dropped) — cluster, GCS, IAM, organized per-service un
 ## 12. Observability
 
 fraud-prediction-api metrics (req/s, count, failures) + infra telemetry via Prometheus/Grafana.
-Logs via Loki, traces via Tempo (request ID propagated through to KServe).
+Logs via Loki, traces via Tempo (request ID propagated through to `model-server`).
 
 ML telemetry — two mechanisms:
 1. Periodic Airflow DAG: pull offline features, compute drift (no ground truth available),
@@ -141,20 +144,22 @@ ML telemetry — two mechanisms:
 
 ## 13. A/B Testing
 
-Champion vs. challenger `InferenceService`, Istio-split traffic, staged ramp (10→25→50→100%).
+Champion vs. challenger `model-server` Deployment, mesh-split traffic via
+`VirtualService`/`DestinationRule`, staged ramp (10→25→50→100%).
 No ground truth at request time — compare via proxy metrics in Grafana: prediction-distribution
 drift (PSI/KS) between models, disagreement rate, fraud-flag rate over time, latency/error
 rate per version.
 
 ## 14. Security
 
-Vault for runtime secrets only. Istio mTLS for service-to-service auth (this is the same
-KServe+Istio decision satisfying a second rubric line). Never plaintext secrets in Airflow.
+Vault for runtime secrets only. Mesh mTLS (`PeerAuthentication` STRICT) for service-to-service
+auth — the same Cloud Service Mesh decision satisfying a second rubric line. Never plaintext
+secrets in Airflow.
 
 ## 15. Repository Design
 
 Repository pattern for data access (Feast/ClickHouse/GCS clients behind thin interfaces).
-Clear separation: FastAPI request layer / business logic / KServe client. 2-3 named
+Clear separation: FastAPI request layer / business logic / model client. 2-3 named
 patterns, not a full DDD architecture.
 
 ## 16. Documentation
@@ -184,9 +189,9 @@ Don't pre-build later steps' infra while an earlier step is unverified.
    gets populated and matches the offline snapshot.
 6. **ML notebook**, then the Kubeflow training pipeline + MLflow. Test a model lands in the
    registry with logged data version.
-7. **fraud-prediction-api + drift-api**, plain deployments first (no KServe yet). Test
-   end-to-end prediction requests against a locally-served model.
-8. **KServe + Istio**, canary traffic split. Test champion/challenger split works.
+7. **fraud-prediction-api + model-server + drift-api**, plain deployments, no mesh. Test
+   end-to-end prediction requests against the promoted model.
+8. **Managed Cloud Service Mesh**, canary traffic split. Test champion/challenger split works.
 9. **Gateway, observability, security, A/B dashboards, CI/CD wraps around each step above**.
 
 When starting a session, check which step is currently in progress before writing any code.

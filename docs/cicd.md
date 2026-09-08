@@ -6,7 +6,7 @@ what actually gets a new image running in the cluster.
 
 ## 1.GitHub Actions pipelines
 
-Five workflows total, one per component — each triggers
+Six workflows total, one per component — each triggers
 independently on the paths it owns, so touching one component never rebuilds
 another:
 
@@ -15,13 +15,16 @@ another:
 | **Airflow pipelines** | `dags/insurance_batch_pipeline.py`, `jobs/**`, `docker_image/dockerfile.airflow` | `airflow-spark` image | `charts/airflow/values.yaml` |
 | Materialize Pipeline | `dags/feature_store_materialize.py`, `feature_store/**` | same `airflow-spark` image (Feast runs inside the Airflow image) | `charts/airflow/values.yaml` |
 | **Training Pipeline** | `ml/config.py`, `ml/gate.py`, `ml/promote.py`, `ml/repositories.py`, `ml/services.py`, `ml/submit.py`, `ml/train.py`, `ml/training-job.yaml`, `docker_image/dockerfile.training` | `training` image | `ml/pipeline.py`'s `TRAINING_IMAGE`, then recompiles `ml/pipeline.yaml` |
-| fraud-prediction-api | §10, not yet built | — | — |
-| drift-api | §10, not yet built | — | — |
+| **fraud-prediction-api** | `fraud_prediction_api/**`, `tests/test_fraud_prediction_api.py`, `docker_image/dockerfile.fraud_prediction_api` | `fraud-prediction-api` image | `charts/fraud-prediction-api/values.yaml` |
+| **model-server** | `model_server/**`, `tests/test_model_server.py`, `docker_image/dockerfile.model_server` | `model-server` image | `charts/model-server/values.yaml` |
+| drift-api | §2, not yet built | — | — |
 
-Two workflows are implemented so far —
-[`.github/workflows/airflow-pipelines.yml`](../.github/workflows/airflow-pipelines.yml)
+Four workflows are implemented so far —
+[`airflow-pipelines.yml`](../.github/workflows/airflow-pipelines.yml),
+[`training-pipeline.yml`](../.github/workflows/training-pipeline.yml),
+[`fraud-prediction-api.yml`](../.github/workflows/fraud-prediction-api.yml)
 and
-[`.github/workflows/training-pipeline.yml`](../.github/workflows/training-pipeline.yml).
+[`model-server.yml`](../.github/workflows/model-server.yml).
 Materialize Pipeline follows the identical shape as Airflow pipelines (same
 image, different trigger paths). Training Pipeline's `update-manifest` job
 differs from the other two: its deployment target isn't a standing Kubernetes
@@ -37,6 +40,14 @@ excludes `charts/airflow/values.yaml`: `ml/pipeline.py` and `ml/pipeline.yaml`
 are exactly what `update-manifest` commits to, and GitHub Actions can't
 combine `paths:` and `paths-ignore:` on the same trigger, so the safe list is
 everything in `ml/` *except* those two.
+
+The two serving workflows exclude their own `charts/` directory for the same
+reason — `update-manifest` commits to `values.yaml` there. For model-server that
+exclusion does a second job: a §13 traffic-weight change is a `values.yaml`
+edit with no code change, so there is no image to build and Argo CD reconciles
+it directly. Triggering CI would produce an identical image under a new tag and
+roll both model Deployments mid-ramp, restarting the very pods whose behaviour
+is being measured. See [`docs/service_mesh.md`](service_mesh.md#4-running-a-championchallenger-test).
 
 ### Job structure
 

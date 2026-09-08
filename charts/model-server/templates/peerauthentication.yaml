@@ -1,0 +1,29 @@
+{{- if .Values.mesh.enabled }}
+##
+# PeerAuthentication — require mTLS on the way in (§14).
+#
+# The DestinationRule already tells *callers* to use mTLS, but that is only one
+# half: a caller with no sidecar, or one configured to skip it, would still be
+# accepted. STRICT here makes the model-server reject plaintext outright, so
+# "every request to the model is authenticated" is enforced at the destination
+# rather than assumed of every client.
+#
+# Workload-scoped via the selector rather than namespace-wide. api-serving-ns
+# also holds Redis, and a namespace-wide STRICT policy would break any client
+# that has no sidecar — Feast's Redis connection from the Airflow materialize
+# job in data-ns being the obvious one. Enforcing per workload keeps the blast
+# radius to the workload actually being secured.
+##
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: {{ include "model-server.name" . }}
+  labels:
+    {{- include "model-server.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "model-server.selectorLabels" . | nindent 6 }}
+  mtls:
+    mode: STRICT
+{{- end }}

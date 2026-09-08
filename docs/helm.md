@@ -18,6 +18,8 @@ that infrastructure.
 | `charts/airflow/values.yaml` | Values for the upstream Airflow chart | `data-ns` | Airflow webserver, scheduler, KubernetesExecutor task pods |
 | `charts/mlflow/` | Local Helm chart | `ml-ns` | MLflow tracking server and model registry |
 | `charts/redis/` | Local Helm chart | `api-serving-ns` | Feast online feature store |
+| `charts/fraud-prediction-api/` | Local Helm chart | `api-serving-ns` | The prediction API ([`docs/api.md`](api.md)) |
+| `charts/model-server/` | Local Helm chart | `api-serving-ns` | Champion + challenger model serving and the mesh routing rules ([`docs/service_mesh.md`](service_mesh.md)) |
 | `charts/kubeflow/` | Kustomize overlay | `ml-ns` | Kubeflow Pipelines control plane |
 | `charts/argocd/` | Values for the Argo CD chart | `argocd-ns` | GitOps controller configuration |
 | `charts/argocd-apps/` | Argo CD `Application` manifests | Argo CD control plane | App-of-apps registration for each service |
@@ -68,12 +70,23 @@ identity and read/write the GCS lakehouse.
   split by time, train, evaluate, log/register in MLflow, and quality gate.
   KFP's own internal bookkeeping is separate from MLflow's metadata.
 
-### `api-serving-ns`: online feature serving
+### `api-serving-ns`: online feature serving and prediction
 
-**Redis** is colocated with the API-serving namespace because the future fraud
-prediction API reads online features synchronously on its hot path. Feast
-materializes features into this Redis instance; the offline source remains
-Parquet in GCS.
+**Redis** is colocated with the API-serving namespace because
+`fraud-prediction-api` reads online features synchronously on its hot path.
+Feast materializes features into this Redis instance; the offline source
+remains Parquet in GCS.
+
+- **fraud-prediction-api** takes a claim ID, reads that Redis, and returns a
+  decision.
+- **model-server** holds the model and answers with a probability. It is
+  rendered twice — champion and challenger — behind one Service, with the
+  traffic split between them owned by the mesh.
+
+Both are in this namespace and not their own because the API's Redis read is
+on the same hot path, and because a single namespace is the injection unit for
+the service mesh: this is the only namespace labelled for sidecar injection.
+See [`docs/api.md`](api.md) and [`docs/service_mesh.md`](service_mesh.md).
 
 ## 3. Helm and Kustomize roles
 

@@ -1,10 +1,7 @@
 ##
 # Training Pipeline CI — lint, (placeholder) test, build+push, bump+recompile.
 #
-# Same 4-job chain as airflow-pipelines.yml, and the same reason: GitHub
-# renders one node per job, and jobs with no `needs` between them get
-# visually merged when they share a downstream job, so lint -> test is a
-# straight chain rather than parallel.
+# Same 4-job chain as airflow-pipelines.yml
 #
 # Triggers on ml/**, but only the files that are actually hand-authored —
 # never ml/pipeline.py or ml/pipeline.yaml, which is exactly what

@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.show or not args.version:
         print(f"{config.REGISTERED_MODEL} @{args.alias} -> {current or 'nothing'}")
         if current:
-            # The storage path, not the models:/ URI — this is the value KServe
+            # The storage path, not the models:/ URI — this is the value model-server
             # needs, so printing it here makes the serving config copy-pasteable.
             print(f"  artifact location: {registry.aliased_model_location(args.alias)}")
         return 0 if args.show else 1
