@@ -23,13 +23,13 @@ executor: "KubernetesExecutor"
 images:
   airflow:
     repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark
-    tag: "8f42b7d931e1"
+    tag: "75c6d2a780e9"
     # don't re-download if the node already has this exact tag cached
     pullPolicy: IfNotPresent
   # Same image for executor pods, so DAG code and task code cannot drift.
   pod_template:
     repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark
-    tag: "8f42b7d931e1"
+    tag: "75c6d2a780e9"
     pullPolicy: IfNotPresent
 
 # Applied to every Airflow container, which matters because scheduler and task
