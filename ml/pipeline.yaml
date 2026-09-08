@@ -1,0 +1,326 @@
+# PIPELINE DEFINITION
+# Name: fraud-model-training
+# Description: Granular training pipeline: dataset → split → train → evaluate → log → gate
+# Inputs:
+#    min_lift: float [Default: 2.0]
+components:
+  comp-build-training-dataset:
+    executorLabel: exec-build-training-dataset
+    inputDefinitions:
+      parameters:
+        pipeline_root:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+  comp-evaluate-model:
+    executorLabel: exec-evaluate-model
+    inputDefinitions:
+      parameters:
+        pipeline_root:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+  comp-log-to-mlflow:
+    executorLabel: exec-log-to-mlflow
+    inputDefinitions:
+      parameters:
+        pipeline_root:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+  comp-quality-gate:
+    executorLabel: exec-quality-gate
+    inputDefinitions:
+      parameters:
+        min_lift:
+          parameterType: NUMBER_DOUBLE
+        run_id:
+          parameterType: STRING
+        summary_root:
+          parameterType: STRING
+  comp-split-by-time:
+    executorLabel: exec-split-by-time
+    inputDefinitions:
+      parameters:
+        pipeline_root:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+  comp-train-model:
+    executorLabel: exec-train-model
+    inputDefinitions:
+      parameters:
+        pipeline_root:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-build-training-dataset:
+      container:
+        args:
+        - '{{$.inputs.parameters[''pipeline_root'']}}'
+        - '{{$.inputs.parameters[''run_id'']}}'
+        command:
+        - sh
+        - -c
+        - python -m ml.train --step build_dataset --dataset-uri "$0/$1/dataset.joblib"
+        env:
+        - name: LAKEHOUSE_ROOT
+          value: gs://aide-playground-lakehouse
+        - name: FEAST_REPO_PATH
+          value: /feature_store
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
+        resources:
+          cpuLimit: 2.0
+          cpuRequest: 1.0
+          memoryLimit: 4.294967296
+          memoryRequest: 3.221225472
+          resourceCpuLimit: '2'
+          resourceCpuRequest: '1'
+          resourceMemoryLimit: 4Gi
+          resourceMemoryRequest: 3Gi
+    exec-evaluate-model:
+      container:
+        args:
+        - '{{$.inputs.parameters[''pipeline_root'']}}'
+        - '{{$.inputs.parameters[''run_id'']}}'
+        command:
+        - sh
+        - -c
+        - python -m ml.train --step evaluate --split-uri "$0/$1/split.joblib" --model-uri
+          "$0/$1/model.joblib" --evaluation-uri "$0/$1/evaluation.joblib"
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
+        resources:
+          cpuLimit: 1.0
+          cpuRequest: 0.5
+          memoryLimit: 2.147483648
+          memoryRequest: 2.147483648
+          resourceCpuLimit: '1'
+          resourceCpuRequest: 500m
+          resourceMemoryLimit: 2Gi
+          resourceMemoryRequest: 2Gi
+    exec-log-to-mlflow:
+      container:
+        args:
+        - '{{$.inputs.parameters[''pipeline_root'']}}'
+        - '{{$.inputs.parameters[''run_id'']}}'
+        command:
+        - sh
+        - -c
+        - python -m ml.train --step log_to_mlflow --dataset-uri "$0/$1/dataset.joblib"
+          --split-uri "$0/$1/split.joblib" --model-uri "$0/$1/model.joblib" --evaluation-uri
+          "$0/$1/evaluation.joblib" --summary-uri "$0/$1/summary.json"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow.ml-ns.svc.cluster.local:5000
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
+        resources:
+          cpuLimit: 1.0
+          cpuRequest: 0.5
+          memoryLimit: 2.147483648
+          memoryRequest: 2.147483648
+          resourceCpuLimit: '1'
+          resourceCpuRequest: 500m
+          resourceMemoryLimit: 2Gi
+          resourceMemoryRequest: 2Gi
+    exec-quality-gate:
+      container:
+        args:
+        - '{{$.inputs.parameters[''summary_root'']}}'
+        - '{{$.inputs.parameters[''run_id'']}}'
+        - '{{$.inputs.parameters[''min_lift'']}}'
+        command:
+        - sh
+        - -c
+        - python -m ml.gate --summary-uri "$0/$1/summary.json" --min-lift "$2"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow.ml-ns.svc.cluster.local:5000
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
+        resources:
+          cpuRequest: 0.2
+          memoryRequest: 0.536870912
+          resourceCpuRequest: 200m
+          resourceMemoryRequest: 512Mi
+    exec-split-by-time:
+      container:
+        args:
+        - '{{$.inputs.parameters[''pipeline_root'']}}'
+        - '{{$.inputs.parameters[''run_id'']}}'
+        command:
+        - sh
+        - -c
+        - python -m ml.train --step split_by_time --dataset-uri "$0/$1/dataset.joblib"
+          --split-uri "$0/$1/split.joblib"
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
+        resources:
+          cpuLimit: 2.0
+          cpuRequest: 1.0
+          memoryLimit: 4.294967296
+          memoryRequest: 3.221225472
+          resourceCpuLimit: '2'
+          resourceCpuRequest: '1'
+          resourceMemoryLimit: 4Gi
+          resourceMemoryRequest: 3Gi
+    exec-train-model:
+      container:
+        args:
+        - '{{$.inputs.parameters[''pipeline_root'']}}'
+        - '{{$.inputs.parameters[''run_id'']}}'
+        command:
+        - sh
+        - -c
+        - python -m ml.train --step train --split-uri "$0/$1/split.joblib" --model-uri
+          "$0/$1/model.joblib"
+        image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17
+        resources:
+          cpuLimit: 2.0
+          cpuRequest: 1.0
+          memoryLimit: 4.294967296
+          memoryRequest: 3.221225472
+          resourceCpuLimit: '2'
+          resourceCpuRequest: '1'
+          resourceMemoryLimit: 4Gi
+          resourceMemoryRequest: 3Gi
+pipelineInfo:
+  description: "Granular training pipeline: dataset \u2192 split \u2192 train \u2192\
+    \ evaluate \u2192 log \u2192 gate"
+  name: fraud-model-training
+root:
+  dag:
+    tasks:
+      build-training-dataset:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-build-training-dataset
+        inputs:
+          parameters:
+            pipeline_root:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+        retryPolicy:
+          backoffDuration: 0s
+          backoffFactor: 2.0
+          backoffMaxDuration: 3600s
+        taskInfo:
+          name: build-training-dataset
+      evaluate-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-model
+        dependentTasks:
+        - train-model
+        inputs:
+          parameters:
+            pipeline_root:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+        retryPolicy:
+          backoffDuration: 0s
+          backoffFactor: 2.0
+          backoffMaxDuration: 3600s
+        taskInfo:
+          name: evaluate-model
+      log-to-mlflow:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-log-to-mlflow
+        dependentTasks:
+        - evaluate-model
+        inputs:
+          parameters:
+            pipeline_root:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+        retryPolicy:
+          backoffDuration: 0s
+          backoffFactor: 2.0
+          backoffMaxDuration: 3600s
+        taskInfo:
+          name: log-to-mlflow
+      quality-gate:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-quality-gate
+        dependentTasks:
+        - log-to-mlflow
+        inputs:
+          parameters:
+            min_lift:
+              componentInputParameter: min_lift
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+            summary_root:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines
+        retryPolicy:
+          backoffDuration: 0s
+          backoffFactor: 2.0
+          backoffMaxDuration: 3600s
+        taskInfo:
+          name: quality-gate
+      split-by-time:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-split-by-time
+        dependentTasks:
+        - build-training-dataset
+        inputs:
+          parameters:
+            pipeline_root:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+        retryPolicy:
+          backoffDuration: 0s
+          backoffFactor: 2.0
+          backoffMaxDuration: 3600s
+        taskInfo:
+          name: split-by-time
+      train-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model
+        dependentTasks:
+        - split-by-time
+        inputs:
+          parameters:
+            pipeline_root:
+              runtimeValue:
+                constant: gs://aide-playground-lakehouse/mlflow/pipelines
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+        retryPolicy:
+          backoffDuration: 0s
+          backoffFactor: 2.0
+          backoffMaxDuration: 3600s
+        taskInfo:
+          name: train-model
+  inputDefinitions:
+    parameters:
+      min_lift:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0

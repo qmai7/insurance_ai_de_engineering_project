@@ -1,0 +1,31 @@
+##
+# Tell metadata-writer which namespace it is in.
+#
+# It resolves the MLMD store as
+# `metadata-grpc-service.$POD_NAMESPACE.svc.cluster.local`, and
+# `metadata_helpers.py` defaults POD_NAMESPACE to the literal string `kubeflow`:
+#
+#   pod_namespace = os.environ.get("POD_NAMESPACE", "kubeflow")
+#
+# Upstream never sets the variable, so the default is load-bearing and the
+# component only works in a namespace called `kubeflow`. In ml-ns it crashloops
+# on `Domain name not found` for a host in a namespace that does not exist.
+#
+# Every other KFP component reads its namespace from a downward-API fieldRef,
+# which is what this adds — the same mechanism, applied to the one deployment
+# upstream forgot.
+##
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metadata-writer
+spec:
+  template:
+    spec:
+      containers:
+        - name: main
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace

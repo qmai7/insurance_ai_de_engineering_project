@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    FEAST_REPO_PATH=/feature_store
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    "fastapi>=0.115" \
+    "uvicorn[standard]>=0.34" \
+    "httpx>=0.28" \
+    "feast[redis,gcp]==0.65.0" \
+    "gcsfs>=2024.6.0"
+
+COPY feature_store/ /feature_store/
+COPY ml/ /app/ml/
+COPY fraud_prediction_api/ /app/fraud_prediction_api/
+
+USER nobody
+EXPOSE 8080
+CMD ["uvicorn", "fraud_prediction_api.main:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -1,0 +1,26 @@
+##
+# postgres — Airflow's (and later MLflow's) metadata database, data-ns.
+# Local chart, no upstream repo to track.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgres
+  namespace: argocd-ns
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:qmai7/insurance_ai_de_engineering_project.git
+    targetRevision: main_empty
+    path: charts/postgres
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data-ns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

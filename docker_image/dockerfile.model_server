@@ -1,0 +1,54 @@
+##
+# model-server — holds the model in memory and scores rows.
+#
+# A separate image from fraud-prediction-api on purpose. The API needs feast +
+# gcsfs and no ML stack; this needs mlflow + scikit-learn and no feast. Merging
+# them would make every API rollout ship an sklearn/mlflow layer it never
+# imports, and every model rollout ship a Feast client it never calls.
+##
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    # Same reason as dockerfile.training: mlflow imports GitPython to record
+    # provenance, there is no git in this image, and left unset every start
+    # prints a twelve-line warning that reads like a failure.
+    GIT_PYTHON_REFRESH=quiet
+
+WORKDIR /app
+
+# mlflow pinned to 3.15.2, the same version dockerfile.mlflow and
+# dockerfile.training pin: the client and the tracking server share a registry
+# schema, and this image reads what the training image wrote.
+#
+# scikit-learn carries dockerfile.training's `>=1.5` specifier so the two
+# resolve alike, but that is a floor, not a guarantee — the two images build at
+# different times, so a scikit-learn minor release between a training build and
+# a serving build puts a different version on each side. Deserialising an
+# estimator across versions is not guaranteed to work and can half-work
+# silently. Pinning both dockerfiles to one exact version is the real fix; it is
+# noted here rather than done unilaterally because it changes the training
+# image too.
+#
+# google-cloud-storage because artifacts are fetched straight from the bucket:
+# the tracking server runs with --no-serve-artifacts (see charts/mlflow), so a
+# model's URI is a real gs:// path this downloads itself under Workload
+# Identity — no key, no proxying through MLflow.
+RUN pip install --no-cache-dir \
+    "fastapi>=0.115" \
+    "uvicorn[standard]>=0.34" \
+    "mlflow==3.15.2" \
+    "scikit-learn>=1.5" \
+    "pandas>=2.2" \
+    "google-cloud-storage>=2.14"
+
+# ml/ for config.MODEL_FEATURES, ModelBuilder.to_matrix and
+# ModelRegistryService — the alias resolution and the dtype coercion are shared
+# with training on purpose, so serving cannot drift from what was fitted.
+COPY ml/ /app/ml/
+COPY model_server/ /app/model_server/
+
+USER nobody
+EXPOSE 8080
+CMD ["uvicorn", "model_server.main:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -1,0 +1,35 @@
+# Feast image — deliberately separate from the Airflow/Spark image.
+#
+# Installing feast[redis,gcp] alongside Airflow resolves to numpy 2.2 and pandas
+# 2.3, and PySpark 3.5.1 does not work with numpy 2.x. Sharing one image would
+# mean the feature-store install silently breaking every Spark job's pandas
+# conversion, so the dependency sets are kept apart.
+
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# gcsfs is what lets Feast read gs:// paths for both the registry and the Parquet
+# offline sources; without it the FileSource path is treated as local and fails.
+RUN pip install \
+    "feast[redis,gcp]==0.65.0" \
+    "gcsfs>=2024.6.0"
+
+WORKDIR /feature_store
+
+# The repo definition travels with the image so `feast apply` and
+# `feast materialize` cannot run against a stale definition. The registry itself
+# stays in GCS, shared with the training pipeline and prediction API.
+COPY feature_store/ /feature_store/
+
+# No ENTRYPOINT: this image is driven by explicit commands
+# (`feast apply`, `feast materialize-incremental <end>`) from Airflow.
+CMD ["feast", "version"]
+
+# If manually build & push this image 
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.2 \
+#  -f docker_image/dockerfile.feast .
+
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.2

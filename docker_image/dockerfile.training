@@ -1,0 +1,61 @@
+# Training image — the Training Pipeline's own image (CLAUDE.md §8 wants a
+# separate CI/CD pipeline per job, and this is that job's unit of deployment).
+#
+# Separate from the Airflow/Spark image for the same reason dockerfile.feast is:
+# feast and scikit-learn resolve to numpy 2.x, and PySpark 3.5.1 cannot use it.
+# Separate from dockerfile.feast because that image is a Feast CLI runner and
+# carries no estimator, while this one needs scikit-learn and an MLflow client.
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# feast[gcp] for offline retrieval over gs://, mlflow for tracking and the
+# registry, google-cloud-storage because artifact upload goes straight to the
+# bucket (the tracking server runs with --no-serve-artifacts so that a model's
+# URI is a real gs:// path model-server can fetch).
+#
+# Versions pinned to match what writes the things this image reads: feast to
+# dockerfile.feast (the registry's entity-key serialization is part of the
+# on-disk format) and mlflow to dockerfile.mlflow (client and server share a
+# schema).
+#
+# The `redis` extra is required even though training never reads the online
+# store. Feast validates the *whole* repo config when a FeatureStore is
+# constructed, so `online_store: type: redis` in feature_store.yaml makes it
+# import RedisOnlineStoreConfig before any retrieval happens. Installing
+# feast[gcp] alone fails at construction with
+# "Could not import module 'feast.infra.online_stores.redis'".
+RUN pip install \
+    "feast[redis,gcp]==0.65.0" \
+    "gcsfs>=2024.6.0" \
+    "mlflow==3.15.2" \
+    "google-cloud-storage>=2.14" \
+    "scikit-learn>=1.5" \
+    "joblib>=1.4"
+
+WORKDIR /app
+
+# The Feast repo definition travels with the image so a training run cannot read
+# features through a stale definition. The registry itself stays in GCS, shared
+# with the Materialize Pipeline.
+COPY feature_store/ /feature_store/
+COPY ml/ /app/ml/
+
+ENV FEAST_REPO_PATH=/feature_store \
+    PYTHONPATH=/app \
+    # MLflow tries to record the git commit of the training code and imports
+    # GitPython to do it. There is no git in this image and no repository either —
+    # the code is a COPY, and provenance comes from the image tag. Left unset,
+    # every run prints a twelve-line "git executable must be specified" warning
+    # that looks like a failure.
+    GIT_PYTHON_REFRESH=quiet
+
+CMD ["python", "-m", "ml.train"]
+
+# If manually build & push this image
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4 \
+#  -f docker_image/dockerfile.training .
+
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4

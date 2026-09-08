@@ -1,0 +1,39 @@
+FROM apache/airflow:2.9.3-python3.10
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends default-jre-headless procps curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install GCS connector for Spark
+ARG GCS_CONNECTOR_VERSION=hadoop3-2.2.30
+RUN mkdir -p /opt/spark-jars \
+    && curl -fsSL \
+       "https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/gcs-connector/${GCS_CONNECTOR_VERSION}/gcs-connector-${GCS_CONNECTOR_VERSION}-shaded.jar" \
+       -o /opt/spark-jars/gcs-connector-hadoop3-shaded.jar \
+    && chmod 0644 /opt/spark-jars/gcs-connector-hadoop3-shaded.jar
+
+USER airflow
+
+RUN pip install --no-cache-dir \
+    pyspark==3.5.1 \
+    delta-spark==3.2.0 \
+    clickhouse-connect==0.8.6 \
+    kafka-python==2.0.2 \
+    acryl-datahub==1.5.0.6
+
+# DAGs and job code are baked in rather than bind-mounted as they were under
+# Docker Compose. Every Airflow task is a separate pod here, and baking them
+# means the scheduler and every task pod are guaranteed to run identical code —
+# the image tag becomes the unit of deployment. The tradeoff is a rebuild per
+# code change, which is what the CI/CD pipeline in §8 automates.
+COPY --chown=airflow:root dags/ /opt/airflow/dags/
+COPY --chown=airflow:root jobs/ /opt/airflow/jobs/
+
+# If manually build & push this image 
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark:0.1.9 \
+#  -f docker_image/dockerfile.airflow .
+
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/airflow-spark:0.1.9

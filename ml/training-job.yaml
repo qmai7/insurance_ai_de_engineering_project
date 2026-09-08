@@ -1,0 +1,57 @@
+##
+# One training run, as a Kubernetes Job.
+#
+# This is the interim runner. §5 replaces it with a Kubeflow pipeline whose
+# components call the same services in ml/services.py — the Job exists so the
+# training path can be verified end to end before Kubeflow's own infrastructure
+# is in the cluster, and so a run is reproducible with one kubectl command.
+#
+#   kubectl delete job fraud-training -n ml-ns --ignore-not-found
+#   kubectl apply -f ml/training-job.yaml
+#   kubectl logs -n ml-ns -l job-name=fraud-training -f
+##
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fraud-training
+  namespace: ml-ns
+spec:
+  # A failed training run is a bug to read, not a transient to retry: it fails on
+  # a broken point-in-time join or an unreachable store, and neither improves on
+  # a second attempt.
+  backoffLimit: 0
+  # Cleaned up an hour after finishing, so a session does not accumulate
+  # completed pods while still leaving time to read the logs.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: fraud-training
+    spec:
+      # Impersonates the bucket-scoped GSA via Workload Identity: reads Feast
+      # Parquet and the Delta log, writes the model artifact to gs://…/mlflow.
+      serviceAccountName: training
+      restartPolicy: Never
+      containers:
+        - name: train
+          image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "ml.train"]
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow.ml-ns.svc.cluster.local:5000"
+            - name: LAKEHOUSE_ROOT
+              value: "gs://aide-playground-lakehouse"
+            - name: FEAST_REPO_PATH
+              value: "/feature_store"
+            - name: MLFLOW_EXPERIMENT
+              value: "insurance-fraud"
+            - name: MLFLOW_REGISTERED_MODEL
+              value: "fraud-detector"
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "3Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"

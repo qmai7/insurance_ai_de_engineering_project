@@ -1,0 +1,121 @@
+{
+  "model_type": "logistic",
+  "features": {
+    "numeric": [
+      "claim_amount",
+      "premium_amount",
+      "claim_to_premium_ratio",
+      "days_since_policy_start",
+      "age",
+      "claim_day_of_week",
+      "f_customer_avg_claim_amount_90d",
+      "f_customer_total_claims_90d",
+      "f_customer_total_claim_amount_90d",
+      "f_customer_total_payments_90d",
+      "f_customer_payment_failure_rate_90d"
+    ],
+    "binary": [
+      "marketing_opt_in",
+      "claim_is_weekend"
+    ],
+    "categorical": [
+      "claim_type",
+      "policy_type",
+      "policy_status",
+      "province",
+      "risk_segment"
+    ]
+  },
+  "feature_views": [
+    "claim_features:claim_amount",
+    "claim_features:premium_amount",
+    "claim_features:claim_to_premium_ratio",
+    "claim_features:days_since_policy_start",
+    "claim_features:claim_type",
+    "claim_features:policy_type",
+    "claim_features:policy_status",
+    "claim_features:province",
+    "claim_features:risk_segment",
+    "claim_features:age",
+    "claim_features:marketing_opt_in",
+    "claim_features:claim_month",
+    "claim_features:claim_day_of_week",
+    "claim_features:claim_is_weekend",
+    "customer_90d:f_customer_avg_claim_amount_90d",
+    "customer_90d:f_customer_total_claims_90d",
+    "customer_90d:f_customer_total_claim_amount_90d",
+    "customer_90d:f_customer_total_payments_90d",
+    "customer_90d:f_customer_payment_failure_rate_90d"
+  ],
+  "excluded_features": [
+    "claim_month"
+  ],
+  "label": "is_fraud",
+  "data_version": 6,
+  "training_window": {
+    "train_start": "2026-05-22",
+    "train_end": "2026-08-13",
+    "val_start": "2026-08-14",
+    "val_end": "2026-08-18",
+    "split": "temporal, quantile 0.8"
+  },
+  "metrics": {
+    "model": "logistic",
+    "pr_auc": 0.35766225412361824,
+    "roc_auc": 0.7508445945945945,
+    "budget": 0.1,
+    "threshold": 0.8959605746601499,
+    "reviewed": 59,
+    "precision": 0.3559322033898305,
+    "recall": 0.328125,
+    "fraud_caught": 21,
+    "fraud_missed": 43,
+    "lift_vs_random": 3.236758474576271
+  },
+  "budget_curve": [
+    {
+      "budget": 0.05,
+      "threshold": 0.9642040867906708,
+      "reviewed": 30,
+      "precision": 0.5333333333333333,
+      "recall": 0.25,
+      "fraud_caught": 16,
+      "fraud_missed": 48,
+      "lift_vs_random": 4.85
+    },
+    {
+      "budget": 0.1,
+      "threshold": 0.8959605746601499,
+      "reviewed": 59,
+      "precision": 0.3559322033898305,
+      "recall": 0.328125,
+      "fraud_caught": 21,
+      "fraud_missed": 43,
+      "lift_vs_random": 3.236758474576271
+    },
+    {
+      "budget": 0.2,
+      "threshold": 0.7313735846314021,
+      "reviewed": 117,
+      "precision": 0.26495726495726496,
+      "recall": 0.484375,
+      "fraud_caught": 31,
+      "fraud_missed": 33,
+      "lift_vs_random": 2.409455128205128
+    },
+    {
+      "budget": 0.3,
+      "threshold": 0.5166717561052744,
+      "reviewed": 175,
+      "precision": 0.22285714285714286,
+      "recall": 0.609375,
+      "fraud_caught": 39,
+      "fraud_missed": 25,
+      "lift_vs_random": 2.026607142857143
+    }
+  ],
+  "operating_point": {
+    "review_budget": 0.1,
+    "threshold": 0.8959605746601499
+  }
+}

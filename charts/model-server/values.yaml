@@ -1,0 +1,87 @@
+image:
+  repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/model-server
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  # Created by charts/bootstrap-secrets.sh, because the Workload Identity
+  # annotation needs a GCP service-account email that only Terraform state
+  # knows. Baking one project's email into a committed chart would make the
+  # repo non-portable.
+  create: false
+  name: model-server
+
+service:
+  type: ClusterIP
+  port: 8080
+
+model:
+  # The name in the request path — /v1/models/<name>:predict. Must match the
+  # MLflow registered model, since that is what the alias is resolved against.
+  name: fraud-detector
+
+mlflow:
+  trackingUri: http://mlflow.ml-ns.svc.cluster.local:5000
+
+# ---------------------------------------------------------------------------
+# §13 champion / challenger.
+#
+# Two Deployments, one Service. Each Deployment carries a `version` label that
+# the DestinationRule turns into a named subset, and the VirtualService assigns
+# each subset a weight. The API calls the Service and never chooses.
+#
+# `alias` is the MLflow registry alias a pod resolves at startup, so *which*
+# model is under test is a registry decision (`ml/promote.py --alias
+# challenger`) rather than a chart edit. A pod is pinned to the version it
+# loaded, which is what makes the weight the only variable during a ramp.
+# ---------------------------------------------------------------------------
+champion:
+  enabled: true
+  alias: production
+  replicaCount: 1
+  # 100 while there is no challenger. The staged ramp in §13 is
+  # 10 -> 25 -> 50 -> 100 on the challenger, with these two always summing to
+  # 100 — Istio rejects a weighted route set that does not.
+  weight: 100
+
+challenger:
+  # Off by default: with no version aliased @challenger the pods would start,
+  # fail /readyz and sit out of the Service's endpoints forever. Turning this on
+  # is the deliberate first step of an A/B run.
+  enabled: false
+  alias: challenger
+  replicaCount: 1
+  weight: 0
+
+mesh:
+  # The DestinationRule/VirtualService pair. Gated because they need CRDs that
+  # only exist once Cloud Service Mesh is enabled on the cluster — rendering
+  # them into a mesh-less cluster makes Argo CD sync-fail on a missing API
+  # rather than reporting the real problem.
+  enabled: true
+  # Retries and a timeout live on the VirtualService, not in the API's httpx
+  # client, so a challenger that is slow or erroring degrades into the
+  # champion's numbers at the mesh layer instead of surfacing as API 502s.
+  timeout: 5s
+  retries:
+    attempts: 2
+    perTryTimeout: 2s
+  # Outlier detection ejects a pod that keeps returning 5xx. On a canary this
+  # is the safety net that matters: a challenger that starts failing is pulled
+  # from the load-balancing pool without waiting for anyone to notice a
+  # dashboard.
+  outlierDetection:
+    consecutive5xxErrors: 3
+    interval: 10s
+    baseEjectionTime: 30s
+
+resources:
+  requests:
+    cpu: 500m
+    # The model plus scikit-learn, pandas and the mlflow client all sit in
+    # resident memory. Lower than this and the loader gets OOM-killed mid
+    # download, which presents as an unexplained restart loop.
+    memory: 1Gi
+  limits:
+    cpu: "1"
+    memory: 2Gi

@@ -1,0 +1,4 @@
+The API is available inside the cluster at:
+  http://{{ include "fraud-prediction-api.fullname" . }}:{{ .Values.service.port }}
+
+Gateway, authentication, rate limiting and HTTPS are intentionally deferred to §10.

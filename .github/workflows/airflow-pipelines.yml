@@ -1,0 +1,121 @@
+##
+# Airflow pipelines CI — lint, (placeholder) test, build+push, bump chart tag.
+#
+# Four separate jobs GitHub's UI renders one
+# node per job, so this is what makes lint/test/build/deploy show as a
+# pipeline graph instead of a single opaque box. Chained sequentially
+# lint -> test -> build-and-push -> update-manifest
+
+# Deliberately triggers only on dags/**, jobs/**, and the Dockerfile — never on
+# charts/airflow/values.yaml, which is the file update-manifest commits to.
+# Triggering on that path too would be an infinite loop: commit -> workflow ->
+# commit -> workflow ...
+#
+# No unit tests exist yet (§9 is a separate, not-yet-built rubric item), so
+# `pytest` is wired in now and will simply report "no tests collected" until
+# real tests land — that exit code is treated as success rather than faked
+# with a placeholder test file.
+
+
+name: Airflow pipelines
+
+on:
+  push:
+    branches: [main_empty]
+    paths:
+      - "dags/**"
+      - "jobs/**"
+      - "docker_image/dockerfile.airflow"
+      - ".github/workflows/airflow-pipelines.yml"
+
+permissions:
+  contents: write   # `update-manifest` commits and pushes back to the repo
+  # this is needed for OIDC (OpenID Connect) which lets Github Actions mint a signed token proving "this run belongs to repo X, workflow Y".
+  # That token is exchanged for a GCP credential via Workload Identity Federation.(WIF)
+  # The credential obtained is used by `build-and-push` job to authenticate with GCP and push Docker images to Artifact Registry
+  id-token: write    
+
+env:
+  REGION: northamerica-northeast1
+  PROJECT_ID: aide-playground
+  REPOSITORY: insurance-images
+  IMAGE: airflow-spark
+  # Both values are safe to commit: WIF's attribute condition (terraform/modules/ci)
+  # already restricts who can assume this identity to workflows running in this
+  # exact repo, so neither string is a usable credential on its own.
+  WORKLOAD_IDENTITY_PROVIDER: projects/722739395224/locations/global/workloadIdentityPools/insurance-github/providers/github
+  SERVICE_ACCOUNT: insurance-github-ci@aide-playground.iam.gserviceaccount.com
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install ruff
+          ruff check jobs/ dags/
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install pytest
+          pytest jobs/ dags/ -q || [ $? -eq 5 ]  # 5 = no tests collected yet
+
+  
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      # 1. Authenticates to GCP via google-github-actions/auth@v2 using WIF (the OIDC exchange happens here).
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+      # 2. Configures Docker to authenticate against Artifact Registry in northamerica-northeast1.
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push
+        id: build
+        # 3. Builds the image from docker_image/dockerfile.airflow.
+        # 4. Tags it with the first 12 characters of the commit SHA (${GITHUB_SHA::12}) — a short, unique, traceable tag tied directly to the commit that produced it. This is a common and good pattern (better than latest, which is not reproducible/pin-able).
+        # 5. Pushes the image.
+        # 6. Writes the tag to $GITHUB_OUTPUT so the next job can reference it via needs.build-and-push.outputs.tag.
+        run: |
+          TAG="${GITHUB_SHA::12}"
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${TAG}"
+          
+          docker build -t "$IMAGE_URI" -f docker_image/dockerfile.airflow .
+          docker push "$IMAGE_URI"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  update-manifest:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bump image tag in charts/airflow/values.yaml
+        run: |
+          TAG="${{ needs.build-and-push.outputs.tag }}"
+          sed -i "s/tag: \"[^\"]*\"/tag: \"${TAG}\"/g" charts/airflow/values.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add charts/airflow/values.yaml
+          git commit -m "ci: bump airflow-spark to ${TAG}" || exit 0
+          git push

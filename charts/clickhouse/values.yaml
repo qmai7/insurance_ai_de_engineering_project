@@ -1,0 +1,38 @@
+image:
+  repository: clickhouse/clickhouse-server
+  tag: "24.8"
+  pullPolicy: IfNotPresent
+
+# One replica, no operator, no sharding.
+#
+# The Gold layer is ~58k rows across all tables. A ClickHouse cluster would add
+# ZooKeeper/Keeper, replication config, and an operator to manage it, in exchange
+# for nothing measurable at this scale. Deliberately single-node.
+replicaCount: 1
+
+database: gold_insurance
+
+service:
+  type: ClusterIP
+  httpPort: 8123
+  nativePort: 9000
+
+persistence:
+  enabled: true
+  # standard-rwo is Autopilot's default balanced PD class. Deleted with the
+  # cluster each session, which is correct — Gold is rebuilt from Silver by the
+  # DAG, so nothing here is irreplaceable.
+  storageClass: standard-rwo
+  size: 10Gi
+
+# Autopilot bills per requested resource and enforces requests, so these are set
+# explicitly rather than left to a LimitRange. Limits match requests: ClickHouse
+# is memory-sensitive, and a burstable pod that gets OOM-killed mid-INSERT fails
+# the DAG in a way that looks like a data bug.
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: 1000m
+    memory: 2Gi

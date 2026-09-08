@@ -1,0 +1,40 @@
+##
+# Feast's online store.
+#
+# Lives in api-serving-ns rather than data-ns because fraud-prediction-api reads
+# it synchronously on the prediction hot path, and colocating it with the service
+# that depends on it keeps that read inside one namespace.
+#
+# The official Redis image, not Bitnami's — the same retirement that broke the
+# Airflow chart's PostgreSQL subchart applies to their Redis images too.
+##
+
+image:
+  repository: redis
+  tag: "7.4-alpine"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 6379
+
+# Persistence is on despite the data being regenerable.
+#
+# `feast materialize` can always refill the store, but without persistence a pod
+# restart empties it silently and the prediction API starts returning "no
+# features found" for every request — a confusing failure that looks like a bug
+# in the API. 2Gi is far more than 10k customers and 2.7k claims need.
+persistence:
+  enabled: true
+  storageClass: standard-rwo
+  size: 2Gi
+
+# No password. The only clients are in-cluster, and inventing one now would mean
+# a plaintext secret in the Feast config — what §14 rules out. Real credentials
+# arrive with Vault.
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    cpu: 500m
+    memory: 1Gi

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: postgres
+description: PostgreSQL StatefulSet backing Airflow (and later MLflow) metadata.
+type: application
+version: 0.1.0
+appVersion: "16"

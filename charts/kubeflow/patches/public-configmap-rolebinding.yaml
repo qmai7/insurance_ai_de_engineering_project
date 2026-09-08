@@ -1,0 +1,33 @@
+##
+# Narrow the `kubeflow-pipelines-public` RoleBinding from a group to two
+# ServiceAccounts.
+#
+# Autopilot's GKE Warden admission webhook rejects the upstream manifest
+# outright:
+#
+#   denied by rbac-binding-limitation: Binding any Role or ClusterRole to Group
+#   "system:authenticated" is forbidden
+#
+# and it is right to. `system:authenticated` on GKE includes every authenticated
+# caller, so upstream's binding is cluster-wide read access — granted, only to
+# one ConfigMap holding the KFP version string, but the shape is the problem,
+# not the payload.
+#
+# The Role is untouched; only the subject list is. It is replaced rather than
+# appended to: RoleBinding subjects have no strategic-merge key, so a patch
+# overwrites the list — which is what we want here.
+#
+# `pipeline-runner` is the identity a step pod runs as, and `default` covers an
+# in-cluster kfp.Client() (the SDK reads this ConfigMap to discover the server
+# version). Out-of-cluster clients authenticate as a GCP user and never needed
+# this binding, so port-forwarded submissions are unaffected either way.
+##
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubeflow-pipelines-public
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-runner
+  - kind: ServiceAccount
+    name: default

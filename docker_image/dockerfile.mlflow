@@ -1,0 +1,38 @@
+# MLflow tracking server + model registry (CLAUDE.md §7).
+#
+# Not the upstream ghcr.io/mlflow/mlflow image, which ships neither a Postgres
+# driver nor a GCS client — both are mandatory here. The backend store is the
+# in-cluster Postgres (run metadata, registered models) and the artifact store is
+# the lakehouse bucket, so without psycopg2 and google-cloud-storage the server
+# starts and then fails on the first write.
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# Pinned. The registry's on-disk schema is migrated by `mlflow db upgrade`, and an
+# unpinned server would silently migrate the database on a rebuild — after which
+# an older client or server cannot read it.
+#
+# 3.x rather than 2.x deliberately: model-version *stages* (`Staging`,
+# `Production`) were removed in MLflow 3 in favour of registry aliases. Aliases
+# are what §13's champion/challenger split needs anyway — an alias can be moved
+# between versions atomically, which is exactly the promotion operation.
+ARG MLFLOW_VERSION=3.15.2
+RUN pip install \
+    "mlflow==${MLFLOW_VERSION}" \
+    "psycopg2-binary>=2.9" \
+    "google-cloud-storage>=2.14"
+
+EXPOSE 5000
+
+# No ENTRYPOINT: the chart supplies the full `mlflow server` invocation, so the
+# backend URI and artifact root are deployment configuration rather than baked in.
+CMD ["mlflow", "--version"]
+
+# If manually build & push this image
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/mlflow:0.1.0 \
+#  -f docker_image/dockerfile.mlflow .
+
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/mlflow:0.1.0

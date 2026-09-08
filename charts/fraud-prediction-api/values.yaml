@@ -1,0 +1,46 @@
+image:
+  repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/fraud-prediction-api
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+serviceAccount:
+  create: false
+  name: fraud-prediction-api
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+model:
+  name: fraud-detector
+  # The alias this API *expects* to be calling. Under a §13 split the response
+  # header wins — see fraud_prediction_api.services.Prediction — so this is a
+  # fallback for when the model-server does not report a version, not the
+  # answer to "which model scored this claim".
+  version: production
+  threshold: "0.5"
+  # One host for both champion and challenger. The API does not choose; the
+  # VirtualService in charts/model-server does. Changing the split therefore
+  # never touches this chart.
+  predictUrl: http://model-server.api-serving-ns.svc.cluster.local:8080/v1/models/fraud-detector:predict
+  # Shorter than the VirtualService's 5s timeout would be, since the mesh may
+  # retry twice at 2s each: this has to outlast the mesh's own budget or the
+  # client gives up before the retry that would have succeeded.
+  timeoutSeconds: "6"
+
+mesh:
+  # Sidecar injection. The API is the *caller* in the mTLS handshake the
+  # model-server's PeerAuthentication requires (STRICT), so without a sidecar
+  # here every prediction fails at the transport layer.
+  enabled: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

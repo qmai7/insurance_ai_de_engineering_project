@@ -1,0 +1,26 @@
+##
+# fraud-prediction-api — the synchronous serving API, api-serving-ns.
+# Gateway auth, rate limiting, HTTPS and KEDA are intentionally deferred to §10.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fraud-prediction-api
+  namespace: argocd-ns
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:qmai7/insurance_ai_de_engineering_project.git
+    targetRevision: main_empty
+    path: charts/fraud-prediction-api
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: api-serving-ns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
