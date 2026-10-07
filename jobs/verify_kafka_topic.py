@@ -10,12 +10,13 @@ can also act as a gate.
 """
 
 import json
+import os
 import sys
 
 from kafka import KafkaConsumer
 from kafka.structs import TopicPartition
 
-BOOTSTRAP = "kafka:29092"
+BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 TOPIC = "insurance_events_raw"
 
 

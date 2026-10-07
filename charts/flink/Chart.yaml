@@ -1,0 +1,6 @@
+apiVersion: v2
+name: flink
+description: Flink standalone session cluster running the streaming feature SQL job.
+type: application
+version: 0.1.0
+appVersion: "1.18"

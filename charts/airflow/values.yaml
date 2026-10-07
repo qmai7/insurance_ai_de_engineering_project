@@ -54,6 +54,10 @@ env:
     value: "8123"
   - name: CLICKHOUSE_DATABASE
     value: "gold_insurance"
+  # charts/kafka — the streaming jobs default to this too; explicit so the
+  # address is visible next to the other data-store endpoints.
+  - name: KAFKA_BOOTSTRAP_SERVERS
+    value: "kafka:29092"
   # Four gunicorn workers is the default and is sized for real traffic. This
   # webserver serves one operator, so two start faster and halve the memory —
   # which is the same pressure that made the startup probe overrun.

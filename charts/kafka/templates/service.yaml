@@ -1,0 +1,25 @@
+# Headless rather than ClusterIP, for two reasons specific to a single broker:
+#
+# - The broker advertises this name to clients. Headless DNS resolves straight
+#   to the pod IP, so there is no hairpin through a virtual IP back to itself.
+# - Kubernetes injects KAFKA_SERVICE_HOST / KAFKA_PORT env vars into every pod
+#   in the namespace for each ClusterIP Service. cp-kafka turns any KAFKA_*
+#   variable into broker config, and Airflow pods would inherit them too.
+#   Headless Services get no such variables.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  labels:
+    app: kafka
+spec:
+  clusterIP: None
+  # Clients can resolve the broker while it is still starting; they retry
+  # until it accepts connections, which is the same as Compose's behaviour.
+  publishNotReadyAddresses: true
+  selector:
+    app: kafka
+  ports:
+    - name: kafka
+      port: {{ .Values.port }}
+      targetPort: kafka

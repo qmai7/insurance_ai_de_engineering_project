@@ -1,0 +1,14 @@
+FROM flink:1.18-scala_2.12
+
+# Under Docker Compose ./flink was bind-mounted at /opt/flink/usrlib. A pod has
+# no host directory to mount, and the Kafka connector JAR is too large for a
+# ConfigMap (1 MiB cap), so the directory is baked in instead. Same path, so
+# flink/run_flink_stream_job.sh runs unchanged: it submits the SQL with the
+# connector attached via `sql-client.sh -j`.
+COPY --chown=flink:flink flink/ /opt/flink/usrlib/
+
+# If manually build & push this image
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/flink:<tag> \
+#  -f docker_image/dockerfile.flink .
+
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/flink:<tag>
