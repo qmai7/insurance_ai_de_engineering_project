@@ -13,7 +13,7 @@ image:
   # flink:1.18-scala_2.12 plus the flink/ directory (SQL, submit script, Kafka
   # connector JAR) — see docker_image/dockerfile.flink.
   repository: northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/flink
-  tag: "latest"
+  tag: "f6dea2e66424"
   pullPolicy: IfNotPresent
 
 # Matches docker-compose.yml. The SQL job runs at parallelism 2, so 4 slots on
