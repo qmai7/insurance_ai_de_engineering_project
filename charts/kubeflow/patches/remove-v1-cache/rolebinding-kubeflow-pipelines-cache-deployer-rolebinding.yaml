@@ -1,0 +1,7 @@
+# One deleted resource per file — why, and why not one file with eight
+# documents in it, is explained in ../../kustomization.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubeflow-pipelines-cache-deployer-rolebinding
+$patch: delete

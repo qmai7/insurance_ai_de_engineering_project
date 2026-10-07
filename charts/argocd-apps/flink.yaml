@@ -1,0 +1,27 @@
+##
+# flink — streaming feature session cluster, data-ns. Local chart. The SQL job
+# itself is submitted by hand (charts/README.md, Streaming) — a session cluster
+# holds no job definition for Argo CD to reconcile.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: flink
+  namespace: argocd-ns
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:qmai7/insurance_ai_de_engineering_project.git
+    targetRevision: main_empty
+    path: charts/flink
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data-ns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

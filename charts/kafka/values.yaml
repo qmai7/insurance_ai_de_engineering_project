@@ -1,0 +1,39 @@
+##
+# Part 1's `kafka` Compose service, moved onto the cluster.
+#
+# Same image and the same KRaft single-node layout as docker-compose.yml, so
+# nothing about the topics or their semantics changes. One broker: the replay
+# is ~36k events, and a replicated cluster would triple the pods (and the
+# Autopilot bill) to protect data that is regenerated from a JSONL file anyway.
+##
+
+image:
+  repository: confluentinc/cp-kafka
+  tag: "7.6.1"
+  pullPolicy: IfNotPresent
+
+# Fixed so a pod restart against an existing PVC finds a log dir formatted for
+# the same cluster. Copied from docker-compose.yml — not a secret.
+clusterId: MkU3OEVBNTcwNTJENDM2Qk
+
+# 29092 is the in-network port Part 1 used, and it is hardcoded as
+# `kafka:29092` in flink/insurance_stream_features.sql and the streaming jobs.
+# Keeping it means none of them change for the move to GKE.
+port: 29092
+controllerPort: 29093
+
+persistence:
+  enabled: true
+  storageClass: standard-rwo
+  # The raw + features topics together are a few MB per replay.
+  size: 5Gi
+
+heapOpts: "-Xms512m -Xmx512m"
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 1000m
+    memory: 1Gi

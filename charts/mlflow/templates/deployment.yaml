@@ -1,0 +1,132 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  labels:
+    app: mlflow
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. Two servers briefly sharing one backend database
+  # is safe for reads, but `mlflow db upgrade` runs at startup and two concurrent
+  # migrations against the same schema are not. One user, no uptime requirement.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      initContainers:
+        # The backend database has to exist before the server touches it, and the
+        # official Postgres image only creates POSTGRES_DB (`airflow`) when it
+        # initialises an empty data directory. MLflow will happily migrate a
+        # schema into a database, but it will not create one.
+        #
+        # Idempotent by construction: guarded by a catalog lookup, because
+        # `CREATE DATABASE` has no IF NOT EXISTS in Postgres and a failing init
+        # container would crash-loop the pod on every restart.
+        - name: create-database
+          image: postgres:16-alpine
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; do
+                echo "waiting for postgres at $PGHOST:$PGPORT"
+                sleep 3
+              done
+              if psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ .Values.backend.database }}'" | grep -q 1; then
+                echo "database {{ .Values.backend.database }} already present"
+              else
+                psql -c 'CREATE DATABASE {{ .Values.backend.database }}'
+                echo "database {{ .Values.backend.database }} created"
+              fi
+          env:
+            - name: PGHOST
+              value: {{ .Values.backend.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.backend.port | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.existingSecret }}
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.existingSecret }}
+                  key: password
+            # Connect to the database that is known to exist in order to create
+            # the one that may not.
+            - name: PGDATABASE
+              value: "postgres"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      containers:
+        - name: mlflow
+          {{- /*
+            Host headers this server will answer to. Built from the names
+            Kubernetes DNS actually resolves for a Service, because MLflow 3's
+            rebinding protection allows private IPs but not private DNS names.
+          */ -}}
+          {{- $ns := .Release.Namespace }}
+          {{- $names := list "mlflow" (printf "mlflow.%s" $ns) (printf "mlflow.%s.svc.cluster.local" $ns) "localhost" "127.0.0.1" }}
+          {{- $hosts := list }}
+          {{- range $names }}
+          {{- $hosts = append $hosts . }}
+          {{- $hosts = append $hosts (printf "%s:*" .) }}
+          {{- end }}
+          {{- $hosts = concat $hosts .Values.server.extraAllowedHosts }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["mlflow", "server"]
+          args:
+            - "--host=0.0.0.0"
+            - "--port={{ .Values.service.port }}"
+            - "--backend-store-uri=$(MLFLOW_BACKEND_URI)"
+            - "--default-artifact-root={{ .Values.artifacts.root }}"
+            - "--workers={{ .Values.server.workers }}"
+            - "--allowed-hosts={{ join "," $hosts }}"
+            {{- if not .Values.artifacts.serve }}
+            # Artifact URIs stay real gs:// paths so model-server can fetch a model
+            # without going through this server. See values.yaml.
+            - "--no-serve-artifacts"
+            {{- end }}
+          env:
+            # The whole SQLAlchemy URI, assembled by bootstrap-secrets.sh, so the
+            # password never appears in a chart, a values file, or a pod spec.
+            - name: MLFLOW_BACKEND_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.existingSecret }}
+                  key: uri
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          # /health is the server's own endpoint and returns 200 only once the
+          # backend store is reachable, so this also gates on Postgres rather than
+          # just on the process being up.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 20
+          resources:
+{{ toYaml .Values.resources | indent 12 }}

@@ -1,0 +1,145 @@
+##
+# Kubeflow Pipelines control plane, in `ml-ns` alongside MLflow (§5).
+#
+# Kustomize, not Helm, unlike everything else in charts/ — KFP publishes no
+# chart, and vendoring the manifests into one would mean re-vendoring them on
+# every upgrade. Argo CD reads kustomize overlays natively, so §8's app-of-apps
+# is unaffected.
+#
+# Apply order matters — see cluster-scoped/kustomization.yaml:
+#
+#   ./charts/bootstrap-secrets.sh            # generates KFP's credentials first
+#   kubectl apply -k charts/kubeflow/cluster-scoped
+#   kubectl wait --for=condition=established --timeout=60s \
+#     crd/workflows.argoproj.io crd/scheduledworkflows.kubeflow.org
+#   kubectl apply -k charts/kubeflow
+#
+# ## Why MySQL, when CLAUDE.md fixes Postgres as the metadata database
+#
+# Because KFP 2.17's Postgres support does not work, and this was established by
+# trying it rather than by reading release notes. `platform-agnostic-postgresql`
+# was the first choice — it is the variant that matches the locked decision, and
+# its existence is why docs/ml.md's earlier "KFP 2.x is MySQL-only" note looked
+# out of date. Four manifest-level defects in, the API server reached
+#
+#   Failed to create default experiment. Err: ... column "defaultexperimentid"
+#   does not exist (SQLSTATE 42703)
+#
+# which is not a configuration problem. KFP builds its queries with squirrel
+# using bare mixed-case identifiers (`sq.Eq{"DefaultExperimentId": ...}`) while
+# GORM's AutoMigrate creates those columns quoted. MySQL is case-insensitive so
+# it never noticed; Postgres folds the unquoted form to lower case and cannot
+# find the column. The same mismatch had already killed the sample loader on
+# `HaveSamplesLoaded` one step earlier. It is compiled into the binary — no
+# overlay reaches it, and renaming columns by hand loses to the next AutoMigrate.
+#
+# So the metadata store here is KFP's bundled MySQL. That is a deviation from
+# CLAUDE.md and worth being precise about: the locked decision is about *our*
+# metadata — Airflow's and MLflow's, which stay on `data-ns/postgres` — and this
+# database holds only KFP's own run bookkeeping, control-plane state that is
+# regenerable and dies with the cluster. The same argument covers SeaweedFS,
+# KFP's internal S3-compatible artifact store, against "GCS replaces MinIO":
+# Bronze/Silver/Gold are on GCS, and this holds compiled pipeline packages.
+#
+# Neither is reused from elsewhere in the platform even where it could be. KFP's
+# schema migrations run as the database superuser, and handing a vendored
+# control plane superuser rights on the instance holding Airflow's and MLflow's
+# metadata trades a real blast radius for one saved pod.
+##
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ml-ns
+
+resources:
+  - github.com/kubeflow/pipelines/manifests/kustomize/env/platform-agnostic?ref=2.17.0
+
+patches:
+  # Namespace assumptions upstream bakes into strings, which no namespace
+  # transformer can reach. Without these the install comes up in a namespace of
+  # crashlooping pods.
+  - path: patches/apiserver-env.yaml
+  - path: patches/launcher-object-store.yaml
+  - path: patches/metadata-writer-namespace.yaml
+
+  # Hand KFP's two credentials to bootstrap-secrets.sh, which generates them per
+  # cluster, and delete the committed ones.
+  #
+  # A §14 requirement, not tidying. Upstream ships `root` with an empty password
+  # for MySQL and `minio`/`minio123` for the object store — plaintext
+  # credentials in a manifest, one of which is not a credential at all. See
+  # patches/mysql-root-password.yaml for the other half of the MySQL change.
+  #
+  # Deleting rather than patching in a value: a patched value would be a
+  # committed password. bootstrap-secrets.sh already owns every other credential
+  # in this cluster for the same reason, and it must run before this overlay is
+  # applied.
+  - path: patches/generated-secrets/secret-mysql-secret.yaml
+  - path: patches/generated-secrets/secret-mlpipeline-minio-artifact.yaml
+  - path: patches/mysql-root-password.yaml
+
+  # Cost and least-privilege, neither of which changes behaviour.
+  - path: patches/resource-requests.yaml
+  - path: patches/pvc-size.yaml
+  - path: patches/public-configmap-rolebinding.yaml
+
+  # Remove `cache-server` and `cache-deployer`, which cannot run on Autopilot.
+  #
+  # `cache-deployer` bootstraps the cache-server's TLS cert by submitting a
+  # CertificateSigningRequest with `CN=system:node:cache-server.ml-ns.svc` and
+  # `O=system:nodes` — it asks the kubelet-serving signer to issue it a node
+  # identity. Autopilot refuses:
+  #
+  #   denied by autogke-csr-limitation: Creating CSRs which use a username with
+  #   'system:' prefix for the common name are not allowed
+  #
+  # No patch fixes that: impersonating a node is the mechanism, not an
+  # incidental detail. The deployer crashloops and cache-server never gets a
+  # cert to serve with.
+  #
+  # Deleting both is safe because they are KFP **v1** components. cache-server
+  # is a mutating webhook that rewrote pods to skip cached steps; in v2 the
+  # driver does the lookup itself — `backend/src/v2/cacheutils.NewClient` dials
+  # the `ml-pipeline` API server, which reads and writes the `cachedb` database
+  # directly. Caching still works. What is gone is a v1 path nothing here uses.
+  #
+  # When §9 brings cert-manager into the cluster, upstream's `env/cert-manager`
+  # overlay is the upgrade path — it issues the same cert as a `Certificate` and
+  # drops the CSR dance. Until then this is the smaller change: two deleted
+  # deployments against installing a cluster-wide CA several build steps early.
+  #
+  # One resource per file, which looks like padding and is not: kustomize 5.4.2
+  # (the version vendored into kubectl 1.31) segfaults on a strategic-merge file
+  # containing more than one `$patch: delete` document. Single-document files are
+  # the workaround, and inlining them here would hit the same bug.
+  - path: patches/remove-v1-cache/deployment-cache-deployer-deployment.yaml
+  - path: patches/remove-v1-cache/deployment-cache-server.yaml
+  - path: patches/remove-v1-cache/service-cache-server.yaml
+  - path: patches/remove-v1-cache/serviceaccount-kubeflow-pipelines-cache.yaml
+  - path: patches/remove-v1-cache/role-kubeflow-pipelines-cache-role.yaml
+  - path: patches/remove-v1-cache/rolebinding-kubeflow-pipelines-cache-binding.yaml
+  - path: patches/remove-v1-cache/role-kubeflow-pipelines-cache-deployer-role.yaml
+  - path: patches/remove-v1-cache/rolebinding-kubeflow-pipelines-cache-deployer-rolebinding.yaml
+
+# Re-point Argo's artifact repository at ml-ns.
+#
+# The base already does this substitution, but it runs while the namespace is
+# still `kubeflow`, and the result is a *string inside a ConfigMap value*
+# (`endpoint: "seaweedfs.kubeflow.svc:9000"`) — the kind of thing a namespace
+# transformer cannot see. Left alone, every pipeline step fails at artifact
+# upload with a DNS error naming a namespace that does not exist. Running the
+# same replacement here catches it after the move.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: pipeline-install-config
+      fieldPath: metadata.namespace
+    targets:
+      - select:
+          kind: ConfigMap
+          name: workflow-controller-configmap
+        fieldPaths:
+          - data.artifactRepository
+        options:
+          delimiter: .
+          index: 1

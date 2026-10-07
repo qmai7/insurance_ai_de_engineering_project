@@ -1,0 +1,34 @@
+[project]
+name = "insurance_ai_de_engineering_project"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+dependencies = [
+    "pandas",
+    "numpy",
+    "pyarrow",
+    "pyspark",
+    "delta-spark",
+    "clickhouse-connect",
+    "confluent-kafka",
+    "great-expectations",
+    "acryl-datahub",
+    "python-dotenv",
+    "pydantic",
+    "pyyaml",
+    "sqlalchemy",
+    "kafka-python>=3.0.7",
+]
+
+[tool.ruff]
+line-length = 100
+
+# Starting narrow on purpose: jobs/ and dags/ were never linted before this,
+# and ruff's un-scoped defaults flag ~44 pre-existing issues (blind excepts,
+# naive datetimes, import ordering) that are unrelated to what CI is being
+# added to check right now. E4/E7/E9/F (pyflakes + basic pycodestyle) catches
+# real bugs — undefined names, unused imports, syntax issues — without
+# blocking on a style backlog nobody has signed up to fix yet. Broaden this
+# incrementally, not all at once.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

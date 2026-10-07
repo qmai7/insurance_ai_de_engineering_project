@@ -1,0 +1,8 @@
+apiVersion: v2
+name: clickhouse
+description: Single-node ClickHouse serving the Gold analytics warehouse (gold_insurance).
+type: application
+version: 0.1.0
+# ClickHouse 24.8 is the LTS line — the pipeline uses only ordinary MergeTree
+# features, so tracking LTS avoids surprise behaviour changes for no lost value.
+appVersion: "24.8"

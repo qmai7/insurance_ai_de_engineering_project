@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-jobmanager
+  labels:
+    app: flink
+    component: jobmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flink
+      component: jobmanager
+  template:
+    metadata:
+      labels:
+        app: flink
+        component: jobmanager
+    spec:
+      # Same hazard as charts/kafka: Services in data-ns would inject *_PORT
+      # variables, and FLINK_JOBMANAGER_PORT=tcp://... is one of them.
+      enableServiceLinks: false
+      containers:
+        - name: jobmanager
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["jobmanager"]
+          env:
+            - name: FLINK_PROPERTIES
+              value: |
+{{ include "flink.properties" . | indent 16 }}
+          ports:
+            - name: rpc
+              containerPort: 6123
+            - name: blob
+              containerPort: 6124
+            - name: ui
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /overview
+              port: ui
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: rpc
+            initialDelaySeconds: 30
+            periodSeconds: 60
+          resources:
+{{ toYaml .Values.jobmanager.resources | indent 12 }}

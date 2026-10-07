@@ -1,0 +1,72 @@
+{{- if .Values.mesh.enabled }}
+{{- $champion := .Values.champion.weight | int }}
+{{- $challenger := .Values.challenger.weight | int }}
+{{- if ne (add $champion $challenger) 100 }}
+{{- fail (printf "champion.weight + challenger.weight must equal 100, got %d + %d = %d" $champion $challenger (add $champion $challenger)) }}
+{{- end }}
+##
+# VirtualService — the traffic split itself.
+#
+# The ramp in §13 is a single value in values.yaml, applied four times:
+#
+#   challenger.weight: 10  ->  25  ->  50  ->  100
+#   champion.weight:   90  ->  75  ->  50  ->    0
+#
+# and each step is a git commit that Argo CD reconciles. Nothing is rebuilt and
+# no pod restarts — Envoy reloads the route weights — so a rollback is reverting
+# one commit, which is what makes staging the ramp cheap enough to actually do
+# it in four steps instead of one.
+#
+# The two weights must sum to 100 or Istio rejects the whole resource, which is
+# why the `fail` above turns that into a `helm template` error rather than a
+# sync failure discovered later in Argo CD.
+#
+# Note what this deliberately does NOT do: match on a header or a cookie to pin
+# a caller to one model. Claims arrive independently and there is no user
+# session to keep consistent, so per-request weighting gives an unbiased sample
+# for the proxy metrics. Sticky routing would instead correlate each model's
+# sample with whatever distinguishes its callers.
+##
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: {{ include "model-server.name" . }}
+  labels:
+    {{- include "model-server.labels" . | nindent 4 }}
+spec:
+  hosts:
+    # The in-cluster Service name only. No gateway is attached: the model-server
+    # is never reachable from outside — the only public entry point is
+    # fraud-prediction-api behind the §10 gateway.
+    - {{ include "model-server.name" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  http:
+    - name: predict
+      timeout: {{ .Values.mesh.timeout }}
+      retries:
+        attempts: {{ .Values.mesh.retries.attempts }}
+        perTryTimeout: {{ .Values.mesh.retries.perTryTimeout }}
+        # Retried at the mesh, on conditions that are safe to retry:
+        # connect-failure and refused-stream never reached the application, and
+        # 503 is what an ejected or not-yet-ready pod returns. Scoring is a
+        # pure function of the request, so a retry cannot double-apply
+        # anything — the §9 idempotency property is what makes this safe.
+        #
+        # Crucially, a retry re-runs route selection, so a request that lands
+        # on a failing challenger can be answered by the champion. That is the
+        # difference between a bad canary degrading and a bad canary being an
+        # outage.
+        retryOn: connect-failure,refused-stream,503
+      route:
+        - destination:
+            host: {{ include "model-server.name" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            subset: champion
+            port:
+              number: {{ .Values.service.port }}
+          weight: {{ $champion }}
+        - destination:
+            host: {{ include "model-server.name" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            subset: challenger
+            port:
+              number: {{ .Values.service.port }}
+          weight: {{ $challenger }}
+{{- end }}

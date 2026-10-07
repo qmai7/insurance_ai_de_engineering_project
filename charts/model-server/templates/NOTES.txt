@@ -1,0 +1,30 @@
+model-server is up in {{ .Release.Namespace }}.
+
+  Service:     {{ include "model-server.name" . }}:{{ .Values.service.port }}
+  Champion:    {{ if .Values.champion.enabled }}@{{ .Values.champion.alias }}, weight {{ .Values.champion.weight }}{{ else }}disabled{{ end }}
+  Challenger:  {{ if .Values.challenger.enabled }}@{{ .Values.challenger.alias }}, weight {{ .Values.challenger.weight }}{{ else }}disabled{{ end }}
+  Mesh:        {{ if .Values.mesh.enabled }}DestinationRule + VirtualService + PeerAuthentication (STRICT){{ else }}off — no traffic split{{ end }}
+
+Which model a pod actually loaded:
+
+  kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "model-server.name" . }}-champion -c model-server -- \
+    python -c "import urllib.request,sys; sys.stdout.write(urllib.request.urlopen('http://localhost:8080/v1/models/{{ .Values.model.name }}').read().decode())"
+
+Verify the split is actually splitting (not just configured):
+
+  kubectl exec -n {{ .Release.Namespace }} deploy/fraud-prediction-api -c api -- sh -c '
+    for i in $(seq 1 40); do
+      curl -s -o /dev/null -D - http://{{ include "model-server.name" . }}:{{ .Values.service.port }}/v1/models/{{ .Values.model.name }}:predict \
+        -H "content-type: application/json" -d "{\"instances\":[[]]}" | grep -i x-model-role
+    done' | sort | uniq -c
+
+The counts should track the configured weights. If everything lands on one
+role, check that both Deployments have Ready pods — a subset with no ready
+endpoints gets no traffic regardless of its weight.
+
+To start an A/B run: alias a version as challenger, then enable it.
+
+  python -m ml.promote --version N --alias challenger
+  # then in values.yaml: challenger.enabled=true, weights 90/10
+
+See docs/service_mesh.md for the ramp and the proxy metrics to judge it on.

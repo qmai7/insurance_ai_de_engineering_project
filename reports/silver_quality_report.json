@@ -1,0 +1,24 @@
+{
+  "checks": {
+    "policyholders_row_count_positive": true,
+    "policyholders_customer_id_not_null": true,
+    "policyholders_customer_id_unique": true,
+    "policies_row_count_positive": true,
+    "policies_policy_id_not_null": true,
+    "policies_policy_id_unique": true,
+    "claims_row_count_positive": true,
+    "claims_claim_id_not_null": true,
+    "claims_claim_id_unique": true,
+    "payments_row_count_positive": true,
+    "payments_payment_id_not_null": true,
+    "payments_payment_id_unique": true,
+    "claims_amount_non_negative": true,
+    "payments_amount_non_negative": true
+  },
+  "row_counts": {
+    "policyholders": 10000,
+    "policies": 15000,
+    "claims": 2700,
+    "payments": 30000
+  }
+}

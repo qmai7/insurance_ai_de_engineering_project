@@ -1,0 +1,61 @@
+##
+# Argo CD — GitOps controller for §8. Watches charts/ and reconciles every
+# namespace to match it; see docs/cicd.md for the full reasoning.
+#
+# Trimmed relative to the upstream chart's defaults: this cluster already hits
+# "Insufficient cpu, Insufficient memory" scheduling pressure with normal
+# workloads (see the fraud-model-training pod pending events), so components
+# this project has no use for are disabled rather than left running idle.
+##
+
+# No SSO provider — admin/local users only, reached by port-forward like the
+# Kubeflow UI (charts/README.md), never through the gateway (§14).
+dex:
+  enabled: false
+
+# Slack/webhook alerts on sync status — nothing subscribes to them here.
+notifications:
+  enabled: false
+
+# Generates Applications from a template + generator (e.g. one per Git
+# directory) — unused here, the app-of-apps root Application is a single
+# hand-written Application pointing at charts/. Left running anyway: this
+# chart version has no top-level toggle to disable the controller entirely,
+# and its footprint (one small replica) isn't worth fighting the chart over.
+
+server:
+  service:
+    type: ClusterIP
+  # TLS terminates nowhere reachable except a port-forward tunnel, so a
+  # self-signed cert only adds a curl --insecure / browser-warning tax for no
+  # real protection — same tradeoff already made for the Kubeflow UI.
+  extraArgs:
+    - --insecure
+
+# GKE Autopilot's admission webhook injects fields no chart declares: resource
+# requests/limits (always ephemeral-storage, and cpu/memory too on any
+# container that left them unset) and an arch toleration
+# (kubernetes.io/arch=amd64:NoSchedule) on every Pod template. Argo CD's
+# desired manifest, rendered straight from the chart, never has these — so
+# without this, every Deployment/StatefulSet on this cluster shows a
+# permanent, meaningless OutOfSync diff. This is Autopilot-specific noise, not
+# drift worth tracking, so it's ignored cluster-wide rather than repeated in
+# every Application's ignoreDifferences.
+configs:
+  cm:
+    resource.customizations.ignoreDifferences.apps_Deployment: |
+      jqPathExpressions:
+        - '.spec.template.spec.containers[]?.resources'
+        - '.spec.template.spec.initContainers[]?.resources'
+        - '.spec.template.spec.tolerations'
+    resource.customizations.ignoreDifferences.apps_StatefulSet: |
+      jqPathExpressions:
+        - '.spec.template.spec.containers[]?.resources'
+        - '.spec.template.spec.initContainers[]?.resources'
+        - '.spec.template.spec.tolerations'
+    resource.customizations.ignoreDifferences.batch_Job: |
+      jqPathExpressions:
+        - '.spec.template.spec.containers[]?.resources'
+        - '.spec.template.spec.initContainers[]?.resources'
+        - '.spec.template.spec.tolerations'
+

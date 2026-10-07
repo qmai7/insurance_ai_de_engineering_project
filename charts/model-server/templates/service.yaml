@@ -1,0 +1,28 @@
+##
+# One Service for both roles.
+#
+# This is the load-bearing piece of §13: because the selector omits `version`,
+# both champion and challenger pods are endpoints of the same Service, and the
+# API has exactly one host to call. Which pods actually receive a request is
+# then a mesh decision, not a DNS one. Two Services would have moved the choice
+# into the API's configuration, where changing the split means a redeployment.
+##
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "model-server.name" . }}
+  labels:
+    {{- include "model-server.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "model-server.selectorLabels" . | nindent 4 }}
+  ports:
+    # Named, and named `http`. Istio infers a port's protocol from this name;
+    # an unnamed port is treated as opaque TCP, and every L7 feature the split
+    # depends on — weighting, retries, per-route timeouts — silently stops
+    # applying.
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      appProtocol: http

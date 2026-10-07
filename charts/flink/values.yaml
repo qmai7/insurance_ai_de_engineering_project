@@ -1,0 +1,45 @@
+##
+# Part 1's flink-jobmanager / flink-taskmanager Compose services, moved onto
+# the cluster as a standalone session cluster: one JobManager Deployment, one
+# TaskManager Deployment, and a Service the TaskManager registers through.
+#
+# Plain Deployments rather than the Flink Kubernetes Operator. The operator
+# brings CRDs and an admission webhook that needs cert-manager, which is the
+# same stack that made KServe fight Autopilot. One long-running SQL job does
+# not need any of it.
+##
+
+image:
+  # flink:1.18-scala_2.12 plus the flink/ directory (SQL, submit script, Kafka
+  # connector JAR) — see docker_image/dockerfile.flink.
+  repository: northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/flink
+  tag: "f6dea2e66424"
+  pullPolicy: IfNotPresent
+
+# Matches docker-compose.yml. The SQL job runs at parallelism 2, so 4 slots on
+# one TaskManager leaves room to run the BASELINE and OPTIMIZED variants of
+# docs/flink_optimization.md side by side.
+taskSlots: 4
+
+# Flink sizes its own memory pools from these; each pod's memory request must
+# be at least this or the JVM is OOM-killed under load.
+jobManagerProcessMemory: 1600m
+taskManagerProcessMemory: 1728m
+
+jobmanager:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+taskmanager:
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 2Gi

@@ -1,0 +1,26 @@
+##
+# redis — online feature store, api-serving-ns (CLAUDE.md: colocated with the
+# service that reads it synchronously on the hot path). Local chart.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis
+  namespace: argocd-ns
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:qmai7/insurance_ai_de_engineering_project.git
+    targetRevision: main_empty
+    path: charts/redis
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: api-serving-ns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

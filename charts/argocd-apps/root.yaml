@@ -1,0 +1,24 @@
+##
+# Root app-of-apps. Points at charts/argocd-apps/ itself — every Application
+# manifest added to that folder becomes a synced child app with no further
+# registration. Applied once, manually, to bootstrap; everything after this
+# is git commits.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd-ns
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:qmai7/insurance_ai_de_engineering_project.git
+    targetRevision: main_empty
+    path: charts/argocd-apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd-ns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

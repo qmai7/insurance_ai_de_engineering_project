@@ -1,0 +1,57 @@
+{{- if .Values.mesh.enabled }}
+##
+# DestinationRule — names the two halves of the Service.
+#
+# Division of labour with the VirtualService, which is the thing most often
+# gotten backwards:
+#
+#   DestinationRule  = *what the destinations are*. It partitions the Service's
+#                      endpoints into named subsets by pod label, and sets
+#                      per-destination connection policy (TLS, load balancing,
+#                      outlier detection).
+#   VirtualService   = *how a request is routed*. It matches the request and
+#                      assigns weights across those named subsets.
+#
+# So a weight in a VirtualService referring to a subset no DestinationRule
+# defines is a 503, not a warning — and it is the single most common failure
+# when standing this up. The subset names here (`champion`, `challenger`) are
+# the contract between the two files.
+##
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: {{ include "model-server.name" . }}
+  labels:
+    {{- include "model-server.labels" . | nindent 4 }}
+spec:
+  host: {{ include "model-server.name" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  trafficPolicy:
+    tls:
+      # ISTIO_MUTUAL, not SIMPLE or DISABLE: the sidecar presents the workload's
+      # mesh-issued identity certificate and the destination verifies it. This is
+      # the §14 service-to-service auth requirement, and it applies to the
+      # champion/challenger hop specifically — a canary is the moment when an
+      # unauthenticated internal caller would be least likely to be noticed.
+      mode: ISTIO_MUTUAL
+    loadBalancer:
+      # Round-robin *within* a subset. The weights across subsets are the
+      # VirtualService's job; this only decides which of a role's replicas
+      # answers.
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: {{ .Values.mesh.outlierDetection.consecutive5xxErrors }}
+      interval: {{ .Values.mesh.outlierDetection.interval }}
+      baseEjectionTime: {{ .Values.mesh.outlierDetection.baseEjectionTime }}
+  subsets:
+    # Defined unconditionally, not gated on `.enabled`. If the challenger subset
+    # vanished from this file whenever the challenger Deployment was scaled to
+    # zero, the VirtualService would briefly reference an undefined subset
+    # during the ramp-down and return 503s. An empty subset is harmless: Istio
+    # resolves it to no endpoints, and a route with weight 0 never selects it.
+    - name: champion
+      labels:
+        version: champion
+    - name: challenger
+      labels:
+        version: challenger
+{{- end }}

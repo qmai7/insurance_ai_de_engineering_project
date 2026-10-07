@@ -1,0 +1,44 @@
+##
+# model-server — champion/challenger model serving, api-serving-ns.
+#
+# Separate Application from fraud-prediction-api even though both land in the
+# same namespace: a §13 traffic ramp is a change to *this* chart's weights, and
+# keeping it its own Application means each ramp step syncs one small diff that
+# is legible on its own in the Argo CD UI.
+##
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: model-server
+  namespace: argocd-ns
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:qmai7/insurance_ai_de_engineering_project.git
+    targetRevision: main_empty
+    path: charts/model-server
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: api-serving-ns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The mesh CRDs (DestinationRule, VirtualService, PeerAuthentication) are
+      # installed by Cloud Service Mesh, not by this chart. ServerSideApply
+      # avoids the client-side-apply annotation-size problem on their large
+      # schemas, which is the usual first sync failure here.
+      - ServerSideApply=true
+#
+# No `ignoreDifferences` for the injected sidecar, and that is worth stating
+# because it looks like an omission: the mesh's injection webhook mutates
+# *Pods*, not the Deployment, so the Deployment stored in etcd still matches
+# the chart and Argo CD sees no drift. Ignoring
+# /spec/template/spec/containers to "fix" a problem that does not exist would
+# also make Argo CD blind to the CI image-tag bump, which is the one diff it
+# exists to notice.
+#

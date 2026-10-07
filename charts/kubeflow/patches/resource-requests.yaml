@@ -1,0 +1,111 @@
+##
+# Resource requests for the seven KFP containers upstream ships without any.
+#
+# This is a cost patch, not a tuning patch. On Autopilot there are no nodes to
+# fill — the bill is the sum of pod *requests* — and a container with no requests
+# is defaulted to 500m CPU / 2 GiB. Seven of them is 3.5 vCPU and 14 GiB of
+# billed idle for a control plane that spends a session doing nothing between
+# two pipeline runs.
+#
+# The values are floors, not measurements: Autopilot enforces a 250m / 512Mi
+# minimum per *pod*, so anything smaller is rounded up anyway and asking for
+# less buys nothing. Requests only, no limits — a burst on the API server during
+# a run should be allowed to use idle capacity rather than be throttled.
+##
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache-deployer-deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: main
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metadata-envoy-deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: container
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metadata-grpc-deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: container
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metadata-writer
+spec:
+  template:
+    spec:
+      containers:
+        - name: main
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-pipeline-scheduledworkflow
+spec:
+  template:
+    spec:
+      containers:
+        - name: ml-pipeline-scheduledworkflow
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-pipeline-viewer-crd
+spec:
+  template:
+    spec:
+      containers:
+        - name: ml-pipeline-viewer-crd
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi

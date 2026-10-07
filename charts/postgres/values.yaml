@@ -1,0 +1,41 @@
+##
+# Replaces the Airflow chart's bundled PostgreSQL subchart.
+#
+# That subchart pulls docker.io/bitnami/postgresql, which no longer exists —
+# Bitnami retired their free Docker Hub images, so chart 1.15.0's pinned tag
+# (16.1.0-debian-11-r15) now fails with ImagePullBackOff. Their `bitnamilegacy`
+# namespace is a frozen archive they reserve the right to remove, so building on
+# it would only defer the same breakage.
+#
+# The official postgres image is maintained, and CLAUDE.md already specifies an
+# in-cluster StatefulSet for this, so owning it outright is the simpler position.
+##
+
+image:
+  repository: postgres
+  # Alpine keeps the pull small; Airflow only needs a plain Postgres endpoint.
+  tag: "16-alpine"
+  pullPolicy: IfNotPresent
+
+# Credentials come from a Secret created out-of-band, never from this file — see
+# charts/README.md. Airflow reads the same password via its own metadata Secret.
+existingSecret: postgres-credentials
+
+database: airflow
+username: airflow
+
+service:
+  port: 5432
+
+persistence:
+  enabled: true
+  storageClass: standard-rwo
+  size: 8Gi
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    cpu: 500m
+    memory: 1Gi
