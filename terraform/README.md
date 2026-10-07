@@ -27,9 +27,9 @@ terraform/
 |---|---|---|
 | VPC + subnet | `insurance-vpc` / `insurance-subnet-northamerica-northeast1` | Named secondary ranges for Pods and Services |
 | GKE Autopilot | `insurance-gke` | Regional, `REGULAR` channel, public nodes |
-| GCS bucket | `aide-playground-lakehouse` | Prefix-separated layers, `force_destroy = true` |
+| GCS bucket | `aide-playground-510902-lakehouse` | Prefix-separated layers, `force_destroy = true` |
 | Service account | `insurance-data-platform@…` | Bucket-scoped `objectAdmin`, no JSON key ever issued |
-| State bucket | `aide-playground-tfstate` | Created by `bootstrap/`, **survives destroy** |
+| State bucket | `aide-playground-510902-tfstate` | Created by `bootstrap/`, **survives destroy** |
 
 
 ## First-time setup
@@ -106,7 +106,7 @@ identical access rules and lifecycle, so separate buckets would add IAM surface
 without buying isolation.
 
 ```text
-gs://aide-playground-lakehouse/
+gs://aide-playground-510902-lakehouse/
 ├── bronze/   raw generated source data (Parquet offline, JSONL streaming)
 ├── silver/   cleaned, quality-gated Delta tables
 ├── gold/     Gold exports out of ClickHouse
@@ -142,7 +142,7 @@ metadata:
   name: airflow
   namespace: data-ns
   annotations:
-    iam.gke.io/gcp-service-account: insurance-data-platform@aide-playground.iam.gserviceaccount.com
+    iam.gke.io/gcp-service-account: insurance-data-platform@aide-playground-510902.iam.gserviceaccount.com
 ```
 
 `terraform output ksa_annotation` prints that annotation line.

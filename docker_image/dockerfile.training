@@ -55,7 +55,7 @@ ENV FEAST_REPO_PATH=/feature_store \
 CMD ["python", "-m", "ml.train"]
 
 # If manually build & push this image
-#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4 \
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/training:0.1.4 \
 #  -f docker_image/dockerfile.training .
 
-#docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/training:0.1.4

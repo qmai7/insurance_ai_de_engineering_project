@@ -283,7 +283,7 @@ Each step:
 
 Artifact handoff via GCS paths:
 ```
-gs://aide-playground-lakehouse/mlflow/pipelines/{run_id}/
+gs://aide-playground-510902-lakehouse/mlflow/pipelines/{run_id}/
 ├── dataset.joblib        Step 1 output → Step 2 input
 ├── split.joblib          Step 2 output → Steps 3-4 input
 ├── model.joblib          Step 3 output → Step 4 input

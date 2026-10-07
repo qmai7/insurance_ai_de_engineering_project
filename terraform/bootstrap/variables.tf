@@ -1,7 +1,7 @@
 variable "project_id" {
   description = "GCP project that hosts the platform."
   type        = string
-  default     = "aide-playground"
+  default     = "aide-playground-510902"
 }
 
 variable "region" {

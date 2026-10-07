@@ -33,11 +33,11 @@ from pathlib import Path
 from kfp import compiler, dsl
 
 TRAINING_IMAGE = (
-    "northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:7fa0b1b16a17"
+    "northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/training:7fa0b1b16a17"
 )
 
 MLFLOW_TRACKING_URI = "http://mlflow.ml-ns.svc.cluster.local:5000"
-LAKEHOUSE_ROOT = "gs://aide-playground-lakehouse"
+LAKEHOUSE_ROOT = "gs://aide-playground-510902-lakehouse"
 PIPELINE_ROOT = f"{LAKEHOUSE_ROOT}/mlflow/pipelines"
 
 

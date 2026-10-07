@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 
-LAKEHOUSE = (os.getenv("LAKEHOUSE_ROOT") or "gs://aide-playground-lakehouse").rstrip("/")
+LAKEHOUSE = (os.getenv("LAKEHOUSE_ROOT") or "gs://aide-playground-510902-lakehouse").rstrip("/")
 FEAST_REPO_PATH = os.getenv("FEAST_REPO_PATH", "/feature_store")
 
 # The separation is intentional and important. 

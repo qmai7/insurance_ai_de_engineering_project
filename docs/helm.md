@@ -220,7 +220,7 @@ troubleshooting Helm or Kubernetes:
 
 ```bash
 gcloud container clusters get-credentials insurance-gke \
-  --region northamerica-northeast1 --project aide-playground
+  --region northamerica-northeast1 --project aide-playground-510902
 ```
 
 For the lower-level deployment commands and chart-specific troubleshooting,

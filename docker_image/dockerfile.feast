@@ -29,7 +29,7 @@ COPY feature_store/ /feature_store/
 CMD ["feast", "version"]
 
 # If manually build & push this image 
-#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.2 \
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/feast:0.1.2 \
 #  -f docker_image/dockerfile.feast .
 
-#docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.2
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/feast:0.1.2

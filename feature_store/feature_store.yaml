@@ -13,7 +13,7 @@ provider: local
 # them drift.
 registry:
   registry_type: file
-  path: gs://aide-playground-lakehouse/feast/registry.db
+  path: gs://aide-playground-510902-lakehouse/feast/registry.db
 
 # Redis lives in api-serving-ns while this job runs from data-ns, so the
 # cross-namespace FQDN is required — a bare `redis:6379` resolves only within the

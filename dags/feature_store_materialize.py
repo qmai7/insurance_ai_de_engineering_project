@@ -23,7 +23,7 @@ from kubernetes.client import models as k8s
 
 
 FEAST_IMAGE = (
-    "northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.5"
+    "northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/feast:0.1.5"
 )
 NAMESPACE = "data-ns"
 
@@ -87,7 +87,7 @@ with DAG(
     )
 
     # Entitiy object and 2 Feature View objects defined in features.py get diffed against the GCS registry 
-    # and written to gs://aide-playground-lakehouse/feast/registry.db.
+    # and written to gs://aide-playground-510902-lakehouse/feast/registry.db.
     feast_apply = feast_task(
         "feast_apply",
         "cd /feature_store && feast apply",

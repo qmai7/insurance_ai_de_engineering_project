@@ -1,7 +1,7 @@
 # Platform configuration. Committed on purpose — nothing here is secret, and
 # pinning it keeps every session reproducible.
 
-project_id = "aide-playground"
+project_id = "aide-playground-510902"
 region     = "northamerica-northeast1"
 
 # The only repo the GitHub Actions Workload Identity Federation pool trusts.
@@ -9,6 +9,10 @@ github_repository = "qmai7/insurance_ai_de_engineering_project"
 
 # Public nodes: no Cloud NAT charges. See variables.tf for the full rationale.
 enable_private_nodes = false
+
+# Managed Cloud Service Mesh off until §18 step 8 — sidecars bill per pod on
+# Autopilot. Flip to true (and apply) when the canary work starts.
+enable_service_mesh = false
 
 # Kubernetes ServiceAccounts allowed to reach the lakehouse bucket.
 # Extend this list as later build steps add workloads.

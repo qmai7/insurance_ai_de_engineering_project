@@ -18,7 +18,7 @@ from datetime import timedelta
 from feast import Entity, FeatureView, Field, FileSource
 from feast.types import Bool, Float64, Int64, String
 
-LAKEHOUSE = "gs://aide-playground-lakehouse"
+LAKEHOUSE = "gs://aide-playground-510902-lakehouse"
 
 # ---------------------------------------------------------------------------
 # Entities

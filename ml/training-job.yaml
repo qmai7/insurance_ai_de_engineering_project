@@ -34,14 +34,14 @@ spec:
       restartPolicy: Never
       containers:
         - name: train
-          image: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/training:0.1.4
+          image: northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/training:0.1.4
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "ml.train"]
           env:
             - name: MLFLOW_TRACKING_URI
               value: "http://mlflow.ml-ns.svc.cluster.local:5000"
             - name: LAKEHOUSE_ROOT
-              value: "gs://aide-playground-lakehouse"
+              value: "gs://aide-playground-510902-lakehouse"
             - name: FEAST_REPO_PATH
               value: "/feature_store"
             - name: MLFLOW_EXPERIMENT

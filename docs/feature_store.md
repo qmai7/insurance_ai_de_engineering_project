@@ -6,7 +6,7 @@ Serves features to two consumers(offline and online store) with different needs:
 history and needs point-in-time correctness; the prediction API reads one entity
 and needs it in milliseconds. Feast keeps one definition for both.
 
-- **Registry** — `gs://aide-playground-lakehouse/feast/registry.db`
+- **Registry** — `gs://aide-playground-510902-lakehouse/feast/registry.db`
 - **Offline store** — Parquet on GCS, exported from Gold
 - **Online store** — Redis (`redis.api-serving-ns.svc.cluster.local:6379`)
 - **Definitions** — [`feature_store/features.py`](../feature_store/features.py)
@@ -116,7 +116,7 @@ they were materialized from. Two properties are worth more than the check itself
 ```bash
 # Manually, against the deployed store
 kubectl run feast-verify -n data-ns --rm -it --restart=Never \
-  --image=northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/feast:0.1.5 \
+  --image=northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/feast:0.1.5 \
   --overrides='{"spec":{"serviceAccountName":"airflow"}}' \
   --command -- sh -c "cd /feature_store && python verify_online.py"
 ```

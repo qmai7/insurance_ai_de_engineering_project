@@ -37,14 +37,14 @@ permissions:
 
 env:
   REGION: northamerica-northeast1
-  PROJECT_ID: aide-playground
+  PROJECT_ID: aide-playground-510902
   REPOSITORY: insurance-images
   IMAGE: airflow-spark
   # Both values are safe to commit: WIF's attribute condition (terraform/modules/ci)
   # already restricts who can assume this identity to workflows running in this
   # exact repo, so neither string is a usable credential on its own.
-  WORKLOAD_IDENTITY_PROVIDER: projects/722739395224/locations/global/workloadIdentityPools/insurance-github/providers/github
-  SERVICE_ACCOUNT: insurance-github-ci@aide-playground.iam.gserviceaccount.com
+  WORKLOAD_IDENTITY_PROVIDER: projects/704186704978/locations/global/workloadIdentityPools/insurance-github/providers/github
+  SERVICE_ACCOUNT: insurance-github-ci@aide-playground-510902.iam.gserviceaccount.com
 
 jobs:
   lint:

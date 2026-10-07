@@ -13,7 +13,7 @@ terraform {
   # Backend blocks cannot interpolate variables, so the bucket name is literal.
   # It is derived from the project id: "<project_id>-tfstate".
   backend "gcs" {
-    bucket = "aide-playground-tfstate"
+    bucket = "aide-playground-510902-tfstate"
     prefix = "platform"
   }
 }

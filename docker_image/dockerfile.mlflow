@@ -32,7 +32,7 @@ EXPOSE 5000
 CMD ["mlflow", "--version"]
 
 # If manually build & push this image
-#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/mlflow:0.1.0 \
+#docker build -t northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/mlflow:0.1.0 \
 #  -f docker_image/dockerfile.mlflow .
 
-#docker push northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/mlflow:0.1.0
+#docker push northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/mlflow:0.1.0

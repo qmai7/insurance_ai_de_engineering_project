@@ -39,12 +39,12 @@ permissions:
 
 env:
   REGION: northamerica-northeast1
-  PROJECT_ID: aide-playground
+  PROJECT_ID: aide-playground-510902
   REPOSITORY: insurance-images
   IMAGE: training
   # Safe to commit — see the identical note in airflow-pipelines.yml.
-  WORKLOAD_IDENTITY_PROVIDER: projects/722739395224/locations/global/workloadIdentityPools/insurance-github/providers/github
-  SERVICE_ACCOUNT: insurance-github-ci@aide-playground.iam.gserviceaccount.com
+  WORKLOAD_IDENTITY_PROVIDER: projects/704186704978/locations/global/workloadIdentityPools/insurance-github/providers/github
+  SERVICE_ACCOUNT: insurance-github-ci@aide-playground-510902.iam.gserviceaccount.com
 
 jobs:
   lint:

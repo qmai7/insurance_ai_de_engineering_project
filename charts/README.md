@@ -176,7 +176,7 @@ kubeconfig pointing at the old address. The cluster is fine; re-fetch credential
 
 ```bash
 gcloud container clusters get-credentials insurance-gke \
-  --region northamerica-northeast1 --project aide-playground
+  --region northamerica-northeast1 --project aide-playground-510902
 ```
 
 Confirm the endpoint really moved with

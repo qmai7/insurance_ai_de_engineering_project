@@ -9,7 +9,7 @@
 ##
 
 image:
-  repository: northamerica-northeast1-docker.pkg.dev/aide-playground/insurance-images/mlflow
+  repository: northamerica-northeast1-docker.pkg.dev/aide-playground-510902/insurance-images/mlflow
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
@@ -53,7 +53,7 @@ backend:
 # access — which is why ml-ns/training has a Workload Identity binding too.
 # ---------------------------------------------------------------------------
 artifacts:
-  root: gs://aide-playground-lakehouse/mlflow
+  root: gs://aide-playground-510902-lakehouse/mlflow
   serve: false
 
 service:
