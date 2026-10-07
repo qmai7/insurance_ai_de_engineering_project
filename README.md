@@ -44,7 +44,7 @@ injecting sidecars, but it was enabled by hand and is not yet in Terraform
 state. See [`docs/api.md`](docs/api.md#9-what-is-not-built-yet) and
 [`docs/service_mesh.md`](docs/service_mesh.md#7-what-is-not-built-yet).
 
-Not yet migrated or built: Kafka/Flink streaming, DataHub, `drift-api`,
+Not yet migrated or built: DataHub, `drift-api`,
 gateway, observability, and the A/B dashboards.
 
 ---

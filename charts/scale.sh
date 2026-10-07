@@ -31,6 +31,9 @@ WORKLOADS=(
   "deployment/airflow-webserver data-ns 1"
   "statefulset/postgres data-ns 1"
   "statefulset/clickhouse data-ns 1"
+  "statefulset/kafka data-ns 1"
+  "deployment/flink-jobmanager data-ns 1"
+  "deployment/flink-taskmanager data-ns 1"
   "statefulset/redis api-serving-ns 1"
   "deployment/mlflow ml-ns 1"
 )
@@ -84,14 +87,16 @@ case "$ACTION" in
     echo "Resuming the platform..."
     # Postgres first: the Airflow webserver fails its startup probe and crashloops
     # if the metadata database is not reachable when it boots.
-    for w in "statefulset/postgres data-ns 1" "statefulset/clickhouse data-ns 1" "statefulset/redis api-serving-ns 1"; do
+    for w in "statefulset/postgres data-ns 1" "statefulset/clickhouse data-ns 1" "statefulset/kafka data-ns 1" "statefulset/redis api-serving-ns 1"; do
       read -r target ns replicas <<<"$w"
       scale "$target" "$ns" "$replicas"
     done
     echo "  waiting for datastores to become ready..."
     kubectl wait --for=condition=ready pod -l app=postgres -n data-ns --timeout=300s >/dev/null 2>&1 || true
     kubectl wait --for=condition=ready pod -l app=clickhouse -n data-ns --timeout=300s >/dev/null 2>&1 || true
-    for w in "deployment/airflow-scheduler data-ns 1" "deployment/airflow-webserver data-ns 1" "deployment/mlflow ml-ns 1"; do
+    # Flink comes back empty: a session cluster keeps no jobs across a restart,
+    # so the streaming job has to be resubmitted (charts/README.md, Streaming).
+    for w in "deployment/airflow-scheduler data-ns 1" "deployment/airflow-webserver data-ns 1" "deployment/flink-jobmanager data-ns 1" "deployment/flink-taskmanager data-ns 1" "deployment/mlflow ml-ns 1"; do
       read -r target ns replicas <<<"$w"
       scale "$target" "$ns" "$replicas"
     done

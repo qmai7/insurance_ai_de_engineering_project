@@ -13,8 +13,8 @@ here. Each Compose service becomes a Deployment, StatefulSet, or Job.
 | `clickhouse` | `clickhouse/` — StatefulSet + PVC | 2 |
 | — (new in Part 2) | `mlflow/` — Deployment + Service in `ml-ns` | 6 |
 | — (new in Part 2) | `kubeflow/` — kustomize overlay, 12 Deployments in `ml-ns` | 6 |
-| `kafka` | not yet | 3 |
-| `flink-jobmanager`, `flink-taskmanager` | not yet | 3 |
+| `kafka` | `kafka/` — single-broker KRaft StatefulSet + PVC | 3 |
+| `flink-jobmanager`, `flink-taskmanager` | `flink/` — session cluster, two Deployments | 3 |
 | `opensearch`, `datahub-*` | not yet | 4 |
 | bind-mounted data dirs | GCS (`jobs/lakehouse.py`) | 2 |
 | `depends_on` | readiness probes | 2 |
@@ -38,10 +38,14 @@ helm repo add apache-airflow https://airflow.apache.org
 helm upgrade --install airflow apache-airflow/airflow \
   --version 1.15.0 -n data-ns -f charts/airflow/values.yaml --wait --timeout 15m
 
-# 4. MLflow — tracking server + model registry (step 6)
+# 4. Streaming — Kafka, then the Flink session cluster (step 3)
+helm upgrade --install kafka charts/kafka -n data-ns --wait
+helm upgrade --install flink charts/flink -n data-ns --wait
+
+# 5. MLflow — tracking server + model registry (step 6)
 helm upgrade --install mlflow charts/mlflow -n ml-ns --wait
 
-# 5. Kubeflow Pipelines — CRDs first, then the control plane (step 6)
+# 6. Kubeflow Pipelines — CRDs first, then the control plane (step 6)
 kubectl apply -k charts/kubeflow/cluster-scoped
 kubectl wait --for=condition=established --timeout=60s \
   crd/workflows.argoproj.io crd/scheduledworkflows.kubeflow.org
@@ -78,6 +82,7 @@ pointing at the cause.
 ```bash
 kubectl port-forward -n data-ns svc/airflow-webserver 8080:8080   # admin/admin
 kubectl port-forward -n data-ns svc/clickhouse 8123:8123
+kubectl port-forward -n data-ns svc/flink-jobmanager 8081:8081    # Flink UI
 kubectl port-forward -n ml-ns svc/mlflow 5000:5000                # MLflow UI
 kubectl port-forward -n ml-ns svc/ml-pipeline-ui 3000:80          # Kubeflow UI
 kubectl port-forward -n ml-ns svc/ml-pipeline 8888:8888           # KFP API
@@ -92,6 +97,41 @@ regression against §14.
 MLflow 3 validates the Host header against an allow-list (DNS-rebinding
 protection). `localhost` is included, so port-forwarding works; in-cluster DNS
 names had to be added explicitly — see `charts/mlflow/values.yaml`.
+
+## Streaming
+
+Part 1's sequence, unchanged apart from `kubectl exec` replacing `docker exec`:
+
+```bash
+# Once per fresh bucket: the replay reads Bronze from GCS, not the repo
+gcloud storage cp generated_insurance_data/streaming/insurance_events.jsonl \
+  gs://<bucket>/bronze/streaming/insurance_events.jsonl
+
+kubectl exec -n data-ns deploy/airflow-scheduler -c scheduler -- python /opt/airflow/jobs/stream_json_to_kafka.py
+kubectl exec -n data-ns deploy/airflow-scheduler -c scheduler -- python /opt/airflow/jobs/verify_kafka_topic.py
+kubectl exec -n data-ns deploy/flink-jobmanager -- bash /opt/flink/usrlib/run_flink_stream_job.sh
+# wait until the job has emitted its windows (~30s, one checkpoint), then:
+kubectl exec -n data-ns deploy/airflow-scheduler -c scheduler -- python /opt/airflow/jobs/stream_features_to_clickhouse.py
+```
+
+The result is `gold_insurance.feat_stream_30m` in ClickHouse: one row per
+province per 30-minute window, sliding every 5 minutes.
+
+**Kafka keeps port 29092.** That is the in-network port Part 1 used, hardcoded
+as `kafka:29092` in `flink/insurance_stream_features.sql`. Keeping it on the
+`kafka` Service means the SQL runs on GKE untouched. The Service is headless,
+so no `KAFKA_*` service-link variables leak into pods — cp-kafka would read
+them as broker config.
+
+**The `flink` image is `flink:1.18` plus `flink/`.** Compose bind-mounted that
+directory; a pod has nothing to mount, and the Kafka connector JAR exceeds a
+ConfigMap's 1 MiB cap. Rebuild it (`docker_image/dockerfile.flink`) when the
+SQL changes.
+
+**Plain Deployments, not the Flink operator.** The operator needs CRDs and a
+cert-manager-backed webhook — the stack that made KServe fight Autopilot. The
+cost is that a session cluster forgets its job on restart: after
+`scale.sh up`, resubmit with `run_flink_stream_job.sh`.
 
 ## Training a model
 
