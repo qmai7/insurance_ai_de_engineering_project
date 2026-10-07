@@ -127,6 +127,14 @@ workers:
     limits:
       cpu: 2000m
       memory: 4Gi
+  # The chart defaults this to false, which stamps every task pod with
+  # `safe-to-evict: "false"`. Autopilot treats that as an extended-duration pod
+  # and only schedules it onto a dedicated node — so each task forces a fresh
+  # node instead of packing onto the ones already running Postgres and
+  # ClickHouse. Under this project's 12-vCPU quota that node can never be
+  # created and every task sits Pending on "GCE quota exceeded". Tasks are
+  # short and the DAG retries twice, so allowing eviction costs little.
+  safeToEvict: true
 
 migrateDatabaseJob:
   serviceAccount:
